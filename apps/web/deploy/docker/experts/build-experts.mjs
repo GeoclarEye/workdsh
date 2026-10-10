@@ -19,7 +19,7 @@
  */
 
 import { mkdirSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -43,7 +43,7 @@ const expert = ({ id, categoryId, ...definition }) => ({
  *   geospatial / data / presentation —— 通用能力：数据怎么算、怎么分析、怎么呈现
  *   agriculture / urban / maritime / disaster —— 领域：某个行业该怎么做
  */
-const EXPERTS = [
+export const EXPERTS = [
   // ── 平台能力层 ──────────────────────────────────────────────────────────
   expert({
     id: 'satellite-tasking-advisor',
@@ -217,20 +217,24 @@ const EXPERTS = [
 ]
 
 mkdirSync(here, { recursive: true })
-let failed = 0
-for (const { id, definition } of EXPERTS) {
-  const { descriptor, archive } = buildExport(definition)
-  // 自校验：走导入方的同一套解析，确保摘要有校验、字段合法。
-  const { issues } = preflightPackage(archive)
-  if (issues.length) {
-    failed += 1
-    console.error(`✗ ${id}：${issues.map(issue => `${issue.code} ${issue.detail ?? ''}`).join('；')}`)
-    continue
-  }
-  const file = join(here, `${id}.expert.zip`)
-  writeFileSync(file, archive)
-  console.log(`✓ ${id}.expert.zip  ${descriptor.bytes} B  「${definition.name}」`)
-}
 
-console.log(`\n共 ${EXPERTS.length} 个专家，成功 ${EXPERTS.length - failed}，失败 ${failed}。`)
-if (failed) process.exitCode = 1
+// 作为模块被 build-teams.mjs 引用时不写文件；只有直接运行时才生成。
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  let failed = 0
+  for (const { id, definition } of EXPERTS) {
+    const { descriptor, archive } = buildExport(definition)
+    // 自校验：走导入方的同一套解析，确保摘要有校验、字段合法。
+    const { issues } = preflightPackage(archive)
+    if (issues.length) {
+      failed += 1
+      console.error(`✗ ${id}：${issues.map(issue => `${issue.code} ${issue.detail ?? ''}`).join('；')}`)
+      continue
+    }
+    const file = join(here, `${id}.expert.zip`)
+    writeFileSync(file, archive)
+    console.log(`✓ ${id}.expert.zip  ${descriptor.bytes} B  「${definition.name}」`)
+  }
+
+  console.log(`\n共 ${EXPERTS.length} 个专家，成功 ${EXPERTS.length - failed}，失败 ${failed}。`)
+  if (failed) process.exitCode = 1
+}
