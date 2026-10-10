@@ -39,14 +39,25 @@ RUN if [ -n "${APT_MIRROR}" ]; then \
 
 COPY ${RELEASE_DIR}/ /opt/workdsh/release/
 
-# 官方 CLI 的版本不硬编码：install-workdsh.mjs 要求 `dsh --version` 与
-# release-manifest.json 的 harness 字段完全一致，不一致会直接报错退出。
-# 所以构建期就从 manifest 里读出真实值——这样发布新版本时只改 RELEASE_DIR。
+# 两个版本都不硬编码，构建期从 manifest 读出：
+#
+#   harness        官方 CLI 的版本。install-workdsh.mjs 要求 `dsh --version` 与它
+#                  完全一致，不一致会直接报错退出。
+#   packageManager profile 声明的 pnpm 版本。**必须用 corepack prepare 把默认版本
+#                  钉到它**：corepack 解析版本时看的是当前工作目录，而安装器是用
+#                  `corepack pnpm --dir <profile>` 调用的（cwd 不随之改变），容器
+#                  cwd 是 / 没有 package.json，corepack 就会用最新版 pnpm。新版
+#                  pnpm 见到 packageManager 声明不一致会直接
+#                  `ERR_PNPM_BAD_PM_VERSION`，首启安装整段失败。
+# 最后一行的 corepack pnpm --version 是断言：解析不到钉住的版本就让构建失败。
 RUN DSH_VERSION="$(node -p "require('/opt/workdsh/release/release-manifest.json').harness")" \
- && echo "安装官方 dsh@${DSH_VERSION}" \
+ && PNPM_VERSION="$(node -p "require('/opt/workdsh/release/release-manifest.json').packageManager")" \
+ && echo "安装官方 dsh@${DSH_VERSION}；把 corepack 默认 pnpm 钉到 ${PNPM_VERSION}" \
  && npm install --global --no-fund --no-audit --registry="${NPM_REGISTRY}" "@deepseek-ai/dsh@${DSH_VERSION}" \
  && corepack enable \
- && dsh --version
+ && corepack prepare "${PNPM_VERSION}" --activate \
+ && dsh --version \
+ && cd / && corepack pnpm --version
 
 COPY deploy/docker/front.mjs /opt/workdsh/front.mjs
 

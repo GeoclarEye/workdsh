@@ -2,7 +2,23 @@ import assert from 'node:assert/strict'
 import { createServer, request as httpRequest } from 'node:http'
 import test from 'node:test'
 
-import { parseReadyLine, publicUrl, startProxy, trustedHost } from '../../deploy/docker/front.mjs'
+import { needsInstall, parseReadyLine, publicUrl, startProxy, trustedHost } from '../../deploy/docker/front.mjs'
+
+test('安装判定：首次启动、版本变化、半途失败都要重装', () => {
+  const current = { version: '0.1.0-alpha.14', harness: '0.2.0-rc.2' }
+
+  // 首次启动：没有标记
+  assert.equal(needsInstall(undefined, current), true, '缺标记时不该跳过安装')
+  // 半途失败：标记没写出来
+  assert.equal(needsInstall(null, current), true)
+
+  // 同一版：跳过
+  assert.equal(needsInstall({ version: '0.1.0-alpha.14', harness: '0.2.0-rc.2' }, current), false)
+
+  // 换了发布版本，或换了官方 harness —— 都要重装，否则卷里留着旧 Profile
+  assert.equal(needsInstall({ version: '0.1.0-alpha.13', harness: '0.2.0-rc.2' }, current), true)
+  assert.equal(needsInstall({ version: '0.1.0-alpha.14', harness: '0.1.7-rc.2' }, current), true)
+})
 
 /** 上游替身：把收到的请求头原样回显，用来验证前门有没有改写它们。 */
 function echoServer() {

@@ -18,7 +18,7 @@
  */
 
 import { spawn } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { createServer, request as httpRequest } from 'node:http'
 import { join, resolve } from 'node:path'
 
@@ -157,14 +157,48 @@ function awaitReady(child, pattern = READY_PATTERN) {
   })
 }
 
-/** 首次启动把 WorkDSH Profile 装进 DSH_HOME；已在则跳过。 */
+/**
+ * 判断是否需要（重新）安装 Profile。
+ *
+ * 标记缺失（首次启动）、版本变化（升级镜像）、或上一次安装没写完标记（半途失败）
+ * 都要重装；只有"上次成功安装的正是当前镜像这一版"才跳过。
+ *
+ * @param installed - 上次成功安装时写下的标记内容，缺失时传 undefined。
+ * @param expected - 当前镜像里的发布版本与官方 harness。
+ */
+export function needsInstall(installed, expected) {
+  return !(installed?.version === expected.version && installed?.harness === expected.harness)
+}
+
+/**
+ * 首次启动把 WorkDSH Profile 装进 DSH_HOME；版本一致则跳过。
+ *
+ * 判定依据是"镜像里的发布版本 + 官方 harness 是否与上次成功安装时一致"，而不是
+ * "profile 目录是否存在"——后者在安装半途失败时会让下次启动直接跳过，带着残缺的
+ * profile 跑起来。升级镜像时会因为版本变化而重新走安装器（安装器本身支持对已存在
+ * 的 Profile 做升级）。
+ */
 function installProfileIfNeeded({ releaseDirectory, dshHome, profile }) {
-  const installed = join(dshHome, 'profiles', profile, 'package.json')
-  if (existsSync(installed)) {
-    console.log(`[front] profile ${profile} 已存在于 ${dshHome}，跳过安装`)
+  const manifest = JSON.parse(readFileSync(join(releaseDirectory, 'release-manifest.json'), 'utf8'))
+  const expected = { version: manifest.version, harness: manifest.harness }
+  const marker = join(dshHome, '.workdsh-profile-installed.json')
+
+  let installed
+  try {
+    installed = JSON.parse(readFileSync(marker, 'utf8'))
+  } catch {
+    installed = undefined
+  }
+  if (!needsInstall(installed, expected)) {
+    console.log(`[front] profile ${profile} 已是 ${expected.version} / ${expected.harness}，跳过安装`)
     return Promise.resolve()
   }
-  console.log('[front] 首次启动：正在把 WorkDSH Profile 安装到 DSH_HOME（需要访问 npm registry）')
+
+  console.log(
+    installed
+      ? `[front] 检测到版本变化（${installed.version}/${installed.harness} → ${expected.version}/${expected.harness}），重新安装 Profile`
+      : '[front] 首次启动：正在把 WorkDSH Profile 安装到 DSH_HOME（需要访问 npm registry）',
+  )
   return new Promise((resolveInstall, rejectInstall) => {
     const installer = spawn(
       process.execPath,
@@ -172,9 +206,20 @@ function installProfileIfNeeded({ releaseDirectory, dshHome, profile }) {
       { stdio: 'inherit' },
     )
     installer.once('error', rejectInstall)
-    installer.once('exit', (code) =>
-      code === 0 ? resolveInstall() : rejectInstall(new Error(`install-workdsh.mjs 以退出码 ${code} 结束`)),
-    )
+    installer.once('exit', (code) => {
+      if (code !== 0) {
+        // 不写标记：下次启动会重试，而不是把半成品当成装好了。
+        rejectInstall(new Error(`install-workdsh.mjs 以退出码 ${code} 结束`))
+        return
+      }
+      try {
+        writeFileSync(marker, `${JSON.stringify(expected, null, 2)}\n`)
+      } catch (error) {
+        rejectInstall(error)
+        return
+      }
+      resolveInstall()
+    })
   })
 }
 
