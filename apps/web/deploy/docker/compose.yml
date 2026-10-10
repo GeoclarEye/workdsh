@@ -1,0 +1,52 @@
+# WorkDSH Web —— 单用户自托管，单容器。
+#
+#   cp deploy/docker/.env.example deploy/docker/.env   # 填 WORKDSH_PUBLIC_URL
+#   docker compose -f deploy/docker/compose.yml up -d
+#
+# 前置条件（缺一样都起不来）：
+#   - 一个指向本服务的域名与有效 HTTPS 证书。**HTTPS 是功能前提，不是安全建议**：
+#     DSH 浏览器端调用 crypto.randomUUID，该 API 仅在安全上下文可用；经 IP + HTTP
+#     访问会直接失败。外层反向代理负责终止 TLS 并原样转发 Host 与 Origin。
+#   - 首次启动需要访问 npm registry：安装器要把官方 DSH 运行时装进 DSH_HOME。
+#     之后的启动不再需要网络。
+#   - 一份能容纳 DSH 运行时的磁盘：镜像与卷各存一份 Profile 的 node_modules。
+
+services:
+  web:
+    image: ${WORKDSH_IMAGE:-workdsh-web:local}
+    # 本地构建时把上面这行换成：
+    # build:
+    #   context: ../..
+    #   dockerfile: deploy/docker/Web.Dockerfile
+    container_name: workdsh-web
+    restart: unless-stopped
+
+    # PID 1 必须回收僵尸进程：前门用 spawn 拉起 dsh，dsh 被强杀时其孙进程会
+    # reparent 给 PID 1，而前门自己不 wait()。
+    init: true
+
+    # 只绑宿主回环，由外层 nginx/Caddy 转发域名过来。若反代也是容器，改为不发布
+    # 端口、让两者加入同一 docker 网络，由反代直接访问 web:3080。
+    ports:
+      - "127.0.0.1:3080:3080"
+
+    volumes:
+      # 会话、凭据、资料库、项目与 Profile 都在这里。
+      # **这个卷不挂，重建容器就丢一切。**
+      - workdsh-home:/srv/dsh
+
+    environment:
+      DSH_HOME: /srv/dsh
+      WORKDSH_RELEASE_DIR: /opt/workdsh/release
+      WORKDSH_PROFILE: workdsh
+      # 对外地址：用来打印带令牌的登录链接，并作为 dsh 的 --trusted-host。
+      WORKDSH_PUBLIC_URL: ${WORKDSH_PUBLIC_URL:?必须设置 WORKDSH_PUBLIC_URL}
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+volumes:
+  workdsh-home:

@@ -1,0 +1,13 @@
+# Docker 构建上下文只需要前门与已构建的发布产物。
+#
+# 不这么写的话，每次 docker build 都要把整个 apps/web 传给守护进程——node_modules
+# 与 .test-runtime 合起来数 GB，构建会从"几秒"变成"几分钟"。
+#
+# 重新包含某个路径时，它的每一层父目录都要先被包含（dockerignore 的匹配规则）。
+**
+!deploy
+!deploy/docker
+!deploy/docker/**
+!.artifacts
+!.artifacts/project-v*
+!.artifacts/project-v*/**
