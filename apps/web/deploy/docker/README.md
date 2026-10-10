@@ -136,3 +136,7 @@ docker run --rm -v workdsh-home:/data -v "$PWD":/backup alpine \
 - **镜像与卷各存一份 Profile 的 `node_modules`**：磁盘占用约为两倍。
 - **非回环页面的「预览版说明」弹窗**：DSH 在非回环页面上记不住"已确认"（该设置命名空间仅限宿主），刷新会再次出现。
 - 未验证：Windows/macOS 之外的宿主、多架构镜像（当前只按 `linux/amd64` 构建）、反向代理之外的接入方式。
+
+## 专家导入包
+
+`experts/` 下有 11 个 `workdsh-expert` 导入包（卫星遥感领域的平台能力 / 通用能力 / 领域三层）。它们**不随镜像自动安装**——专家导入要人工预览确认，没有受支持的自动播种入口。导入步骤、分层说明与局限见 [experts/README.md](experts/README.md)。
