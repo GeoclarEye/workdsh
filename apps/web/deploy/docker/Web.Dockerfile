@@ -18,7 +18,7 @@
 
 FROM node:22-bookworm-slim
 
-ARG RELEASE_DIR=.artifacts/project-v0.1.0-alpha.15
+ARG RELEASE_DIR=.artifacts/project-v0.1.0-alpha.16
 # 国内网络建议换源：--build-arg NPM_REGISTRY=https://registry.npmmirror.com --build-arg APT_MIRROR=mirrors.tencentyun.com
 ARG NPM_REGISTRY=https://registry.npmjs.org/
 ARG APT_MIRROR=
