@@ -20,6 +20,14 @@ export function connectorProcess(definition: Pick<ConnectorDefinition, 'id' | 's
   return bundledExample ? { command: process.execPath, args: [serverPath] }
     : { command: definition.command!, args: [...(definition.args ?? [])] };
 }
+/** The stored value is the whole Authorization header, so a value without a scheme must be repaired, not reinterpreted. */
+export function authorizationHeaderValue(value: string): string {
+  return /^[A-Za-z][A-Za-z0-9+.-]*\s/.test(value) ? value : `Bearer ${value}`;
+}
+/** Undefined leaves the official client's own default (60s) in place; the plugin must not undercut it silently. */
+export function toolCallTimeoutMs(override?: number): number | undefined {
+  return typeof override === 'number' && Number.isFinite(override) && override > 0 ? override : undefined;
+}
 type ChildFiber = { dispose(): Promise<void> };
 type Runtime = { child?: ChildFiber; state: ConnectorState; diagnostic?: string };
 type JsonRecord = Record<string, unknown>;
@@ -29,6 +37,8 @@ const refFor = (value: string) => credentialRef(value) as unknown as Parameters<
 
 export interface ConnectorManagerOptions {
   seedExample?: boolean;
+  /** Tool-call timeout for every connector; unset keeps the official MCP client's default. */
+  toolCallTimeoutMs?: number;
 }
 
 /** Persist connector instances here; delegate protocol, transport, discovery and reconnect to official MCP clients. */
@@ -165,11 +175,12 @@ export class ConnectorManager extends Service implements ConnectorManagementServ
       runtime.diagnostic = '连接授权已失效，请重新授权。';
       throw new Error('connector/authorization-missing');
     }
-    const headers: Record<string, string> = authorization ? { Authorization: authorization.value } : {};
+    const headers: Record<string, string> = authorization ? { Authorization: authorizationHeaderValue(authorization.value) } : {};
     const transportConfig = definition.transport === 'stdio'
       ? { serverName: definition.serverName, transport: 'stdio' as const, ...connectorProcess(definition), env: {} }
       : { serverName: definition.serverName, transport: 'streamable-http' as const, url: definition.url!, headers };
-    const fiber = this.ctx.plugin(McpClient, { ...transportConfig, failOnStartupError: true, toolCallTimeoutMs: 10_000, maxInstructionBytes: 8_192,
+    const timeoutMs = toolCallTimeoutMs(this.options.toolCallTimeoutMs);
+    const fiber = this.ctx.plugin(McpClient, { ...transportConfig, failOnStartupError: true, ...(timeoutMs === undefined ? {} : { toolCallTimeoutMs: timeoutMs }), maxInstructionBytes: 8_192,
       reconnect: { enabled: true, initialDelayMs: 250, maxDelayMs: 5_000, maxAttempts: 4 } }) as ChildFiber & PromiseLike<unknown>;
     try { await fiber; runtime.child = fiber; runtime.state = 'ready'; }
     catch (cause) { await fiber.dispose().catch(() => undefined); runtime.state = 'offline'; runtime.diagnostic = cause instanceof Error ? cause.message : 'MCP 服务启动失败。'; throw cause; }
