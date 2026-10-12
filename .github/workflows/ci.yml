@@ -147,6 +147,9 @@ jobs:
       - name: Library import, search and task reference tests
         working-directory: apps/web
         run: node --test ../../packages/plugins/library/tests/*.test.mjs
+      - name: Connector authorization and tool-call timeout tests
+        working-directory: apps/web
+        run: node --test ../../packages/plugins/connectors/tests/*.test.mjs
       - name: Enterprise desktop identity and collaboration tests
         working-directory: apps/web
         run: node --test ../../packages/providers/identity-enterprise/tests/*.test.mjs ../../packages/plugins/enterprise-collaboration/tests/*.test.mjs
