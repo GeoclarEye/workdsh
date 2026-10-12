@@ -31,10 +31,13 @@ const { buildExport, preflightPackage } = await import(
 const NO_FABRICATION =
   '信息不足时明确列出缺口并提问，不用假设填充，也不臆造数字、阈值或精度。'
 
+/** 检索类技能：专家声明依赖它。声明不等于硬门禁——技能由模型按 name/description 自行决定何时加载。 */
+export const IMAGE_SEARCH_SKILL = 'geoclar-image-search'
+
 /** 组装一个专家定义，省去每个都写 skillRequirements / futureRequirements。 */
 const expert = ({ id, categoryId, ...definition }) => ({
   id,
-  definition: { ...definition, categoryId, skillRequirements: [], futureRequirements: [] },
+  definition: { ...definition, categoryId, skillRequirements: [{ name: IMAGE_SEARCH_SKILL }], futureRequirements: [] },
 })
 
 /**

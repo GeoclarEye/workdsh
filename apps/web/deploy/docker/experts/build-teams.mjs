@@ -19,7 +19,7 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { EXPERTS } from './build-experts.mjs'
+import { EXPERTS, IMAGE_SEARCH_SKILL } from './build-experts.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const { buildExport, preflightPackage } = await import(
@@ -37,7 +37,7 @@ const member = (key, expertId) => {
 /** 团队定义：主理人字段 + team 段。 */
 const team = ({ id, categoryId, members, workflows, ...lead }) => ({
   id,
-  definition: { ...lead, categoryId, skillRequirements: [], futureRequirements: [], team: { members, workflows } },
+  definition: { ...lead, categoryId, skillRequirements: [{ name: IMAGE_SEARCH_SKILL }], futureRequirements: [], team: { members, workflows } },
 })
 
 const TEAMS = [
