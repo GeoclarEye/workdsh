@@ -1,3 +1,8 @@
+# 工具调用超时按部署给足：检索类工具要并发问多个数据源，实测单次
+# `geoclar_recommend_schemes` 会越过 60 秒（官方的默认值），所以显式放宽到 600 秒。
+# 插件侧不配就沿用官方默认，配了就整体替换这个值。
 - insert:
     - id: workdsh-connectors
       name: workdsh-plugin-connectors
+      config:
+        toolCallTimeoutMs: 600000
