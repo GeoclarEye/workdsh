@@ -20,7 +20,12 @@ export const schemeCardCss = `
 .wd-sc-amount-k b{color:var(--wd-sc-accent);font-weight:600}
 .wd-sc-amount-v{font-size:20px;font-weight:600;font-variant-numeric:tabular-nums;color:var(--wd-sc-accent)}
 
-/* 并排的列只有两种情况：精算那一套 + 至多三套同池对照（presets 时只画一套），所以不需要横向滚动。 */
+/*
+ * 兜底：容器放不下四列时横向滚动，而不是让表格溢出到卡外（溢出 = 数据被裁掉且没有提示）。
+ * 与"预设态去掉滚动"不是一回事：presets 是**减少列数**（12 → 1），列少了自然不用滚；
+ * custom 是**列数固定为 4**，只有在真的放不下时才滚 —— 放得下时不出现（auto 不产生滚动条）。
+ */
+.wd-sc-table-wrap{overflow-x:auto}
 .wd-sc-table{width:100%;border-collapse:collapse}
 /* 四列并排时的横向预算：指标列 56px + 单元格左右各 4px（评审稿的 6px 收窄，省下的给读数列）。 */
 .wd-sc-table th,.wd-sc-table td{padding:8px 4px;vertical-align:baseline;border-bottom:1px solid var(--wd-sc-line)}

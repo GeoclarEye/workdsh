@@ -93,10 +93,10 @@ const blockOf = (result) => ({ kind: 'tool-result', seq: 1, time: 1, callId: 'ca
 /**
  * 渲染一张卡并断言。`result` 默认是三套并排的真实出参；`phase` 用来演"还没出结果"。
  */
-async function withCard(run, { callId = 'call-1', result = payload, phase = 'result' } = {}) {
+async function withCard(run, { callId = 'call-1', result = payload, phase = 'result', width } = {}) {
   const browser = await chromium.launch({ headless: true });
   try {
-    const page = await browser.newPage();
+    const page = await browser.newPage(width === undefined ? {} : { viewport: { width, height: 900 } });
     page.setDefaultTimeout(8000);
     page.on('pageerror', (error) => console.error(error.message));
     await page.route('http://127.0.0.1:19113/', (route) => route.fulfill({ contentType: 'text/html',
@@ -198,6 +198,35 @@ test('还没出结果（start 阶段）也不画', async () => {
   await withCard(async (page) => {
     assert.equal((await page.locator('#root').innerText()).trim(), '');
   }, { phase: 'start' });
+});
+
+/** 表格容器与卡的横向几何：滚动落在容器里，卡自己没有溢出。 */
+const tableBox = (page) => page.evaluate(() => {
+  const card = document.querySelector('.wd-sc');
+  const wrap = document.querySelector('.wd-sc-table-wrap');
+  return { cardClient: card.clientWidth, cardScroll: card.scrollWidth,
+    wrapClient: wrap.clientWidth, wrapScroll: wrap.scrollWidth,
+    columns: document.querySelectorAll('th.wd-sc-col').length };
+});
+
+test('容器放不下四列时在容器里横向滚：不裁数据、也不溢出卡片', async () => {
+  // 560px 下四列放不下（实测表格最小宽度 ~580px）：兜底是滚动，不是溢出。
+  await withCard(async (page) => {
+    const box = await tableBox(page);
+    assert.equal(box.columns, 4, '滚动不是"少画一列"——四列一个不少');
+    assert.ok(box.wrapScroll > box.wrapClient, `放不下就该能滚（scroll ${box.wrapScroll} / client ${box.wrapClient}）`);
+    assert.ok(box.wrapClient <= box.cardClient, '滚动容器自己不溢出卡片');
+    assert.equal(box.cardScroll, box.cardClient, '卡里没有横向溢出（溢出等于数据被裁且无提示）');
+  }, { width: 560 });
+});
+
+test('放得下时不滚：宽视口下容器不出现滚动条', async () => {
+  await withCard(async (page) => {
+    const box = await tableBox(page);
+    assert.equal(box.columns, 4);
+    assert.ok(box.wrapScroll - box.wrapClient <= 1, `放得下就不该有横向滚动（scroll ${box.wrapScroll} / client ${box.wrapClient}）`);
+    assert.equal(box.cardScroll, box.cardClient);
+  }, { width: 900 });
 });
 
 test('卡底「查看详情」把**这张卡的** callId 交出去', async () => {

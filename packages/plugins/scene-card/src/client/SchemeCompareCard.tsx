@@ -156,34 +156,42 @@ export function SchemeTable({ schemes, primary }: {
   readonly primary: SchemeView | undefined;
 }): ReactNode {
   return (
-    <table className="wd-sc-table">
-      <thead>
-        <tr>
-          {/* 左上角空着：评审稿如此，指标名在每行第一个格子里。 */}
-          <th className="wd-sc-col-metric" scope="col" />
-          {schemes.map((scheme) => (
-            <th key={scheme.key} scope="col" className={scheme === primary ? 'wd-sc-col is-primary' : 'wd-sc-col'}>
-              <span className="wd-sc-name">{label(scheme.key)}</span>
-              {/* 对照套标"对照"；主推那列的条件由入参得来，出参里没有，所以不编一个。 */}
-              {scheme === primary ? null : <span className="wd-sc-tag">对照</span>}
-            </th>
-          ))}
-        </tr>
-      </thead>
-      <tbody>
-        {SCHEME_METRICS.map((metric) => (
-          <tr key={metric.id}>
-            <td className="wd-sc-metric">{metric.label}</td>
-            {schemes.map((scheme) => {
-              const classes = ['wd-sc-val'];
-              if (scheme === primary) classes.push('is-primary');
-              if (metric.tone?.(scheme) === 'warn') classes.push('is-warn');
-              return <td key={`${metric.id}:${scheme.key}`} className={classes.join(' ')}>{metric.read(scheme)}</td>;
-            })}
+    /*
+     * 外面这层只为**兜底**：容器放不下四列时横向滚动，而不是让表格溢出卡外
+     * （溢出 = 数据被裁掉且没有任何提示，那是最差的结果）。
+     * 与"预设态去掉滚动"不是一回事：presets 是**减少列数**（12 → 1），列少了自然不需要滚；
+     * custom 是**列数固定为 4**，只有真的放不下时才滚 —— 放得下时它不出现。
+     */
+    <div className="wd-sc-table-wrap">
+      <table className="wd-sc-table">
+        <thead>
+          <tr>
+            {/* 左上角空着：评审稿如此，指标名在每行第一个格子里。 */}
+            <th className="wd-sc-col-metric" scope="col" />
+            {schemes.map((scheme) => (
+              <th key={scheme.key} scope="col" className={scheme === primary ? 'wd-sc-col is-primary' : 'wd-sc-col'}>
+                <span className="wd-sc-name">{label(scheme.key)}</span>
+                {/* 对照套标"对照"；主推那列的条件由入参得来，出参里没有，所以不编一个。 */}
+                {scheme === primary ? null : <span className="wd-sc-tag">对照</span>}
+              </th>
+            ))}
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {SCHEME_METRICS.map((metric) => (
+            <tr key={metric.id}>
+              <td className="wd-sc-metric">{metric.label}</td>
+              {schemes.map((scheme) => {
+                const classes = ['wd-sc-val'];
+                if (scheme === primary) classes.push('is-primary');
+                if (metric.tone?.(scheme) === 'warn') classes.push('is-warn');
+                return <td key={`${metric.id}:${scheme.key}`} className={classes.join(' ')}>{metric.read(scheme)}</td>;
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
