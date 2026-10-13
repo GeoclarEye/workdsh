@@ -36,8 +36,9 @@ description: 用 GeoClar 星图的 MCP 工具做影像检索与选景报价—�
 
 **检索结果怎么读**（两个检索工具同一形状）：
 
-- `returnedCount` 是**本次返回的条数**，受展示上限截断；任务分支另有 `totalResults` = 命中总数。`truncated=true` 只表示展示被截断。
-  不要把 `returnedCount` 说成"共找到 N 景" —— "正好 100"和"被截断的 100"是两件事。
+- `returnedCount` 是**后端本次可得的条数**（受落库上限约束），**不是发给你的条数**；任务分支另有 `totalResults` = 命中总数。
+  **发给你的 `scenes` 恒定最多 20 条** —— `truncated=true` 就表示超过 20、只给了前 20。
+  所以不要把 `returnedCount` 说成"共找到 N 景"：它是"后端手里有多少"，不是"给到你多少"。
 - `progress` 四个数恒等：`succeeded + failed + unfinished === chunkCount`。`failed > 0` 就说"部分批次失败"。
 - 任务 `status` 的终态是 `success` / `partial` / `failed`；不是这三个就还在跑，继续等，不要下结论。
 - `coverage` 是这次范围的 `regionAreaKm2` / `coveredAreaKm2` / `coveragePercent`。
