@@ -10,6 +10,14 @@ This repository owns WorkDSH Web and Desktop. Desktop and Web consume the same e
 - After a temporary branch has been merged and its changes verified on the default branch, delete that temporary branch. Retain an unmerged branch only while its work is still under review; do not delete unique history.
 - If the default branch is renamed, update GitHub settings, CI, website deployment, release triggers, and documentation together before removing the old branch.
 
+### Upstream fork and commit conventions
+
+- **`origin` is `techflag/workdsh` (upstream) and is not a target for routine work.** Product changes live on the fork `geoclar` = `git@github.com:GeoclarEye/workdsh.git`. Before any push, run `git merge-base --is-ancestor geoclar/main main` and confirm the push is a fast-forward; the fork may have moved.
+- **Default to not contributing upstream.** When a piece of work is merged back into `main`, ask whether it should also be contributed to `techflag/workdsh` before opening any pull request there. Only open one when that answer is yes. Never infer it from the size or value of the change — whether a change is a product feature or a generic improvement is a product decision.
+- **Every change, including a one-line bug fix, lands on a temporary branch** (`feat/<topic>` or `fix/<topic>`, cut from `main`) and returns through a merge commit. Editing `main` directly and pushing bypasses review, checks and the record of why the change exists. The exception is documentation and typo fixes, which commit straight to `main`.
+- **Cut a release in its own commit, never mixed with a feature.** Bump **two** version numbers, both required: the Web release version in `apps/web/package.json` plus `RELEASE_DIR` in `apps/web/deploy/docker/Web.Dockerfile` decides whether `front.mjs`'s `needsInstall` runs the installer; and the plugin's own package version decides whether pnpm actually replaces the package. Bumping only the first yields a deployment that looks successful while serving stale code.
+- **Commit messages follow three parts: symptom, root cause with evidence (file, line, measured number), and how it was verified.** Split refactors from behaviour fixes in separate commits so `git bisect` can separate them. See `5e461cf458` and `8d8ef1e0c5` for the house style.
+
 ## Prerequisites and setup
 
 - Use Node.js `^22.19.0` or `>=24.0.0` and the root Yarn `4.18.0` release through Corepack.
