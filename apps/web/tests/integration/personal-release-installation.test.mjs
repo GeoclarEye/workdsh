@@ -14,7 +14,7 @@ test('personal installer plans four default features, requires optional opt-in, 
   for(const name of names){const bytes=Buffer.from(name),filename=name+'.tgz';await writeFile(join(root,filename),bytes);packages.push({name,filename,sha256:createHash('sha256').update(bytes).digest('hex')});}
   await writeFile(join(root,'release-manifest.json'),JSON.stringify({version:'test',harness:'0.1.7-rc.2',packages}));
   const cli=join(root,'fake-dsh');await writeFile(cli,"#!/bin/sh\nprintf '0.1.7-rc.2\\n'\n",{mode:0o700});
-  const home=join(root,'home'),profile=join(home,'../../profiles','workdsh');await mkdir(profile,{recursive:true});
+  const home=join(root,'home'),profile=join(home,'profiles','workdsh');await mkdir(profile,{recursive:true});
   const previous=JSON.stringify({dependencies:{'workdsh-plugin-office':'existing'},dsh:{profile:{bundles:['workdsh-plugin-office']}}});
   await writeFile(join(profile,'package.json'),previous);
   const run=(extra=[])=>execFileSync(process.execPath,['scripts/install-project-release.mjs','--directory',root,'--dsh',cli,'--dry-run',...extra],{env:{...process.env,DSH_HOME:home},encoding:'utf8',stdio:['ignore','pipe','pipe']});
