@@ -127,6 +127,15 @@ test('池诊断读出候选/可用/剔除，并带上"已达上限"', () => {
     skippedNoGeometry: 1, atLimit: true });
 });
 
+test('一套方案都没有（条件筛完池为空）：形状认得，但没有主推可画', () => {
+  // 出参合法（§4.2：条件筛完池为空），所以**不是**"形状不认识"；
+  // 但 `primary` 没有 —— 调用方（卡、自动弹）据此回落/不弹，所以这条要钉住。
+  const v = buildDeliverableView(phaseResult({ ...real, schemes: [] }));
+  assert.ok(v, 'schemes: [] 是合法形状，不是读不懂');
+  assert.deepEqual(v.schemes, []);
+  assert.equal(v.primary, undefined);
+});
+
 test('池缺失时不给池诊断，卡照样能画（池空的那一套）', () => {
   const v = buildDeliverableView(phaseResult({ ...real, pool: null }));
   assert.equal(v.pool, undefined);

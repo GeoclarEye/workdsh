@@ -1,7 +1,7 @@
 /**
  * 真渲染：把对话内那张卡挂进一个真浏览器，看它到底画出了什么。
  *
- * 纯函数测试证明得出"视图模型读对了"，证不出"卡画对了" —— 版式（三列并排、金额最响、
+ * 纯函数测试证明得出"视图模型读对了"，证不出"卡画对了" —— 版式（四列并排、金额最响、
  * 卡底「查看详情」）与**回落**（形状不认识时页面上不该有这张卡）都只有渲染才算数。
  *
  * 跑法：node --test packages/plugins/scene-card/tests/scheme-card-render.test.mjs
@@ -31,8 +31,13 @@ const bundle = await build({
       import { createRoot } from 'react-dom/client';
       import { SchemeCompareCard } from './src/client/SchemeCompareCard.tsx';
       window.renderCard = (props) => {
-        (window.__root ??= createRoot(document.getElementById('root'))).render(
-          React.createElement(SchemeCompareCard, props));
+        // 直接调用拿到返回值：回落是"return null"，只有把这件事记下来才断言得动
+        // （只断言"页面上没有"会放过"渲染了一棵空树"）。
+        const returned = SchemeCompareCard(props);
+        window.__returned = returned === null ? 'null' : typeof returned;
+        if (returned !== null && returned !== undefined) {
+          (window.__root ??= createRoot(document.getElementById('root'))).render(returned);
+        }
       };`,
   },
   bundle: true,
@@ -156,7 +161,7 @@ test('琥珀只给"不能直接当结论用"的两个数：金额下界与预算
     const color = (locator) => locator.evaluate((node) => getComputedStyle(node).color);
     const rowOf = (label) => page.locator('tbody tr')
       .filter({ has: page.locator('td.wd-sc-metric', { hasText: new RegExp(`^${label}$`) }) });
-    // 覆盖率一律不上琥珀（盖不满是常态）：三列全查一遍，防的是"顺手把 tone 加回来"。
+    // 覆盖率一律不上琥珀（盖不满是常态）：四列全查一遍，防的是"顺手把 tone 加回来"。
     const coverage = rowOf('覆盖率').locator('td.wd-sc-val');
     for (const index of [0, 1, 2, 3]) assert.notEqual(await color(coverage.nth(index)), WARN, '覆盖率不该带琥珀');
     // 列序与出参一致：0 = CUSTOM、1 = LATEST、2 = SHARPEST、3 = CHEAPEST。
@@ -189,6 +194,7 @@ test('单套 + 池空：只有一列时照样画得出来（不因为"没得比"
 
 test('形状不认识：页面上没有这张卡（回落通用卡片）', async () => {
   await withCard(async (page) => {
+    assert.equal(await page.evaluate(() => window.__returned), 'null', '组件本身 return null');
     assert.equal((await page.locator('#root').innerText()).trim(), '');
     assert.equal(await page.locator('.wd-sc').count(), 0);
   }, { result: { nope: 1 } });
@@ -196,6 +202,7 @@ test('形状不认识：页面上没有这张卡（回落通用卡片）', async
 
 test('还没出结果（start 阶段）也不画', async () => {
   await withCard(async (page) => {
+    assert.equal(await page.evaluate(() => window.__returned), 'null', '组件本身 return null');
     assert.equal((await page.locator('#root').innerText()).trim(), '');
   }, { phase: 'start' });
 });
@@ -230,8 +237,20 @@ test('放得下时不滚：宽视口下容器不出现滚动条', async () => {
 });
 
 test('卡底「查看详情」把**这张卡的** callId 交出去', async () => {
+  // 这个值故意与其它用例的默认 callId 不同：写死成一个常量就过不了，
+  // 只有真的把 props.callId 传下去才成立 —— 这是"历史可达性"的全部内容。
   await withCard(async (page) => {
     await page.getByRole('button', { name: '查看详情' }).click();
-    assert.equal(await page.evaluate(() => window.__opened), 'call-1');
-  }, { callId: 'call-1' });
+    assert.equal(await page.evaluate(() => window.__opened), 'call-7a3f');
+  }, { callId: 'call-7a3f' });
+});
+
+test('一套方案都没有（条件筛完池为空）：不画这张卡，回落通用卡片', async () => {
+  // §4.2 的合法形状。卡的存在意义是"并排比方案"，没有方案就没有比较；
+  // 这时通用卡里的原始出参（含池的剔除计数）配上助手的文字比一张纯诊断卡更有用。
+  await withCard(async (page) => {
+    assert.equal(await page.evaluate(() => window.__returned), 'null', '组件本身 return null，不是渲染一棵空树');
+    assert.equal((await page.locator('#root').innerText()).trim(), '');
+    assert.equal(await page.locator('.wd-sc').count(), 0);
+  }, { result: { ...payload, schemes: [] } });
 });

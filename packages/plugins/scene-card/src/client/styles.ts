@@ -43,11 +43,11 @@ export const schemeCardCss = `
  */
 .wd-sc-val.is-warn,.wd-sc-row.is-warn dd{color:var(--wd-sc-warn)}
 .wd-sc-u{color:var(--wd-sc-muted);font-size:10.5px;margin-left:2px}
-/* 主推那一列：底色 + 左右描边，名字用强调色 —— 三列并排时要一眼认出"你这一套"。 */
+/* 主推那一列：底色 + 左右描边，名字用强调色 —— 几列并排时要一眼认出"你这一套"。 */
 .wd-sc-table .is-primary{background:var(--dsw-alias-bg-layer-2);border-left:1px solid var(--wd-sc-line);border-right:1px solid var(--wd-sc-line)}
 .wd-sc-table .wd-sc-col.is-primary .wd-sc-name,.wd-sc-table .wd-sc-col.is-primary .wd-sc-tag{color:var(--wd-sc-accent)}
 
-/* 覆盖率：条 + 数字。没盖满时整格转琥珀 —— 那是"要不要继续"的读数。 */
+/* 覆盖率：条 + 数字。**不上琥珀**（盖不满是常态）：琥珀只给金额下界与预算截断，见上面的说明。 */
 .wd-sc-cover{display:flex;align-items:center;justify-content:space-between;width:104px;margin-left:auto}
 .wd-sc-bar{width:54px;height:4px;border-radius:2px;background:var(--dsw-alias-interactive-bg-hover);overflow:hidden;flex:0 0 auto}
 .wd-sc-bar i{display:block;height:100%;background:var(--wd-sc-accent)}
@@ -67,7 +67,7 @@ export const schemeCardCss = `
 .wd-sc-actions button:focus-visible{outline:2px solid var(--wd-sc-accent);outline-offset:2px}
 .wd-sc-why{color:var(--wd-sc-muted);font-size:11px}
 
-/* 面板里同一份读数的竖排形态（右侧只有 376px，三列并排读不清）。 */
+/* 面板里同一份读数的竖排形态（右侧只有 376px，四列并排读不清）。 */
 .wd-sc-metrics{margin:0;padding:10px}
 .wd-sc-row{display:flex;align-items:baseline;gap:10px;padding:3px 0}
 .wd-sc-row dt{width:58px;flex:0 0 auto;color:var(--wd-sc-muted);font-size:11px}

@@ -68,8 +68,15 @@ export interface PoolView {
  * 三个都不成立就**没有**下一步 —— 那时不显示整块，而不是补一句套话。
  */
 export type NextAction =
+  /** 放宽条件就能盖满（出参 `relaxation`）；对话内的卡会把它印成一行建议。 */
   | { readonly kind: 'relax'; readonly value: number }
+  /**
+   * 池已达上限、可能没取全 ⇒ 收窄范围重算。
+   * **本面的卡不消费这个分支**，它是给右侧面板页脚的「下一步」按钮用的（Task 4）——
+   * 卡上不该出现"点一下就能收窄"的假按钮，所以这里留着备面板取用，不是死代码。
+   */
   | { readonly kind: 'narrow' }
+  /** 预算把方案截断了；`fullCoverageAmount` 是"盖满要多少钱"（后端没算时为 `null`）。同上：面板消费。 */
   | { readonly kind: 'budget'; readonly fullCoverageAmount: number | null };
 
 /** 两个面共用的交付物读数。 */
@@ -79,6 +86,10 @@ export interface DeliverableView {
   /**
    * 主推那一套：`CUSTOM`（精算）优先，其次 `VALUE`（性价比，预设里的默认推荐），
    * 都没有就取第一套。与 `schemes` 里是**同一个对象**。
+   *
+   * **没有一套方案时（`schemes: []`，条件筛完池为空）这里是 `undefined`** ——
+   * 那是合法形状、不是读不懂，但"没有可比较的方案"就没有这张卡要讲的事：
+   * 调用方（卡、Task 4 的自动弹）据此 `return null` / 不弹，回落官方通用卡片。
    */
   readonly primary?: SchemeView;
   /**

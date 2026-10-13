@@ -6,9 +6,10 @@
  *   2. **卡底固定「查看详情」**：面板是按调用的活状态，几天后早换成了别的东西，
  *      所以历史那一件只能从它自己那张卡回去（spec §4.3）。
  *
- * 版式基准：评审稿（mockup）左半边。三列并排、金额最响、覆盖率「条＋数字」、
- * 未盖满与金额下界用琥珀色。方案网格由 {@link SCHEME_METRICS} 定义，右侧面板复用同一份
- * —— 两个面不会各自把同一份出参读成两个样子。
+ * 版式基准：评审稿（mockup）左半边。四列并排（`CUSTOM` + 三套同池对照）、金额最响、
+ * 覆盖率「条＋数字」。**琥珀只有两种情形**：金额下界（`pricingComplete === false`）与
+ * `budgetCapped === true`；覆盖率**不用**琥珀（盖不满是常态，全标黄等于没有信号）。
+ * 方案网格由 {@link SCHEME_METRICS} 定义，右侧面板复用同一份 —— 两个面不会各自把同一份出参读成两个样子。
  */
 import type { ToolCallViewProps } from '@deepseek-ai/dsh-client-ui-tool/client';
 import type { ReactNode } from 'react';
@@ -73,7 +74,10 @@ export interface SchemeMetric {
   readonly id: string;
   readonly label: string;
   readonly read: (scheme: SchemeView) => ReactNode;
-  /** 整行的语气；琥珀用于"未盖满"这类需要用户决定的读数。 */
+  /**
+   * 整行的语气。目前只有金额那一行用：`budgetCapped === true` ⇒ 琥珀
+   * （预算把这个数截断了，所以它不能直接当结论用）。覆盖率那一行**没有** `tone`。
+   */
   readonly tone?: (scheme: SchemeView) => 'warn' | undefined;
 }
 
