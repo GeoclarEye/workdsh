@@ -105,8 +105,5 @@
         "@deepseek-ai/dsh-client-ui-sidebar-right"
       ]
     }
-  },
-  "dependencies": {
-    "zod": "4.4.3"
   }
 }

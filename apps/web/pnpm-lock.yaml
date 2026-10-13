@@ -1198,10 +1198,6 @@ importers:
         version: link:../../ui
 
   ../../packages/plugins/scene-card:
-    dependencies:
-      zod:
-        specifier: 4.4.3
-        version: 4.4.3
     devDependencies:
       '@deepseek-ai/cordis':
         specifier: 4.0.4
