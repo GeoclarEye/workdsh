@@ -111,12 +111,14 @@ test('预设菜单里主推 VALUE（性价比），不是排在第一个的那�
   assert.equal(v.schemes.length, 6, '整套菜单仍在视图模型里（卡只画主推那一套）');
 });
 
-test('mode=presets 是"这是菜单"的判据；custom 与缺失都不是', () => {
-  assert.equal(buildDeliverableView(phaseResult(real)).presets, false);
+test('mode 只有 custom / presets 两个值；缺失或读不懂 ⇒ 整份回落', () => {
+  assert.equal(buildDeliverableView(phaseResult(real)).presets, false, 'custom ⇒ 并排画');
   assert.equal(buildDeliverableView(phaseResult({ ...real, mode: 'custom' })).presets, false);
-  assert.equal(buildDeliverableView(phaseResult({ ...real, mode: 'presets' })).presets, true);
+  assert.equal(buildDeliverableView(phaseResult({ ...real, mode: 'presets' })).presets, true, 'presets ⇒ 只画主推');
+  // 读不懂"哪条路"就无从决定画几列 —— 那是形状不认识，交给通用卡片，不是按 12 列铺开。
   const { mode: _dropped, ...withoutMode } = real;
-  assert.equal(buildDeliverableView(phaseResult(withoutMode)).presets, false, '老后端没有 mode 键时按老行为');
+  assert.equal(buildDeliverableView(phaseResult(withoutMode)), undefined, 'mode 缺失');
+  assert.equal(buildDeliverableView(phaseResult({ ...real, mode: 'preset' })), undefined, 'mode 拼错');
 });
 
 test('池诊断读出候选/可用/剔除，并带上"已达上限"', () => {

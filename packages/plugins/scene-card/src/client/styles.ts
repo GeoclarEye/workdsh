@@ -22,9 +22,10 @@ export const schemeCardCss = `
 
 /* 并排的列只有两种情况：精算那一套 + 至多三套同池对照（presets 时只画一套），所以不需要横向滚动。 */
 .wd-sc-table{width:100%;border-collapse:collapse}
-.wd-sc-table th,.wd-sc-table td{padding:8px 6px;vertical-align:baseline;border-bottom:1px solid var(--wd-sc-line)}
+/* 四列并排时的横向预算：指标列 56px + 单元格左右各 4px（评审稿的 6px 收窄，省下的给读数列）。 */
+.wd-sc-table th,.wd-sc-table td{padding:8px 4px;vertical-align:baseline;border-bottom:1px solid var(--wd-sc-line)}
 .wd-sc-table tr:last-child td{border-bottom:0}
-.wd-sc-col-metric{width:64px}
+.wd-sc-col-metric{width:56px}
 .wd-sc-col{font-weight:400;text-align:right;padding-bottom:5px;white-space:nowrap}
 .wd-sc-name{display:block;font-size:12px;color:var(--dsw-alias-label-primary);font-weight:600}
 .wd-sc-tag{display:block;font-size:10.5px;color:var(--wd-sc-muted);margin-top:1px}
@@ -42,8 +43,8 @@ export const schemeCardCss = `
 .wd-sc-table .wd-sc-col.is-primary .wd-sc-name,.wd-sc-table .wd-sc-col.is-primary .wd-sc-tag{color:var(--wd-sc-accent)}
 
 /* 覆盖率：条 + 数字。没盖满时整格转琥珀 —— 那是"要不要继续"的读数。 */
-.wd-sc-cover{display:flex;align-items:center;justify-content:space-between;width:118px;margin-left:auto}
-.wd-sc-bar{width:62px;height:4px;border-radius:2px;background:var(--dsw-alias-interactive-bg-hover);overflow:hidden;flex:0 0 auto}
+.wd-sc-cover{display:flex;align-items:center;justify-content:space-between;width:104px;margin-left:auto}
+.wd-sc-bar{width:54px;height:4px;border-radius:2px;background:var(--dsw-alias-interactive-bg-hover);overflow:hidden;flex:0 0 auto}
 .wd-sc-bar i{display:block;height:100%;background:var(--wd-sc-accent)}
 .wd-sc-n{text-align:right}
 /* 金额下界：前缀「≥」。写成琥珀是怕有人把它当成精确值读。 */

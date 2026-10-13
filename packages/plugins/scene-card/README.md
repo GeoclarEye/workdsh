@@ -19,7 +19,7 @@
 
 1. **对话内的卡**：`ctx.slots.register({ name: 'tool.call.toolview', key: 'mcp__geoclar__geoclar_recommend_schemes' }, SchemeCompareCard)`。这个 keyed slot 的 `key` 是 **wire 工具名**（`mcp__<连接器 serverName>__<工具名>`），连接器不叫 `geoclar` 就键不上，自动回落官方通用卡片。
 
-   卡画几列由出参的 `mode` 决定：**精算**（`mode=custom`）并排画 `CUSTOM` 与三套同池对照；**不给条件**（`mode=presets`，12 套预设）只画主推那一套（`VALUE`／性价比，与技能第三节同口径），另用一行说清还有多少套、怎么把它们变成精算 —— 那是一张菜单，不是结论，不倒整张表。
+   卡画几列由出参的 `mode` 决定：**精算**（`mode=custom`）并排画 `CUSTOM` 与三套同池对照；**不给条件**（`mode=presets`，12 套预设）只画主推那一套（`VALUE`／性价比，与技能第三节同口径），另用一行说清还有多少套、怎么把它们变成精算 —— 那是一张菜单，不是结论，不倒整张表。`mode` 只有这两个值且**必须有** —— 缺失或读不懂就是"认不出形状"，回落通用卡片（不拿它猜列数）。
 2. **右侧面板**：`ctx.sidebarRightTabs.register({ id, kind, title })` 声明 tab 类型，再由 `ctx.slots.register({ name: 'sidebar.right.pane.tab', key: <同一个 id> }, Component)` 提供内容。`key` 与 `id` 必须一致。
 
 卡底的「查看详情」调 `ctx.sidebarRight.openTabIn(sessionId, 'workdsh-scene-deliverable', { params: { callId } })`，把面板绑到**这一次**调用上 —— 面板是按调用的活状态，几天后早换成了别的东西，历史那一件只能从它自己那张卡回去。

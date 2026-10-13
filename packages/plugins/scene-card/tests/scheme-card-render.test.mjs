@@ -63,11 +63,15 @@ const latest = { ...custom, key: 'LATEST', sceneCount: 312, coveragePercent: 58.
 const sharpest = { ...custom, key: 'SHARPEST', sceneCount: 118, coveragePercent: 41.0, uncoveredAreaKm2: 32589,
   estimatedAmount: 7980150, pricingComplete: false, dateFrom: '2025-01-01', dateTo: '2026-09-01',
   gsdMin: 0.25, gsdMax: 0.3, cloudCoverMax: 8, cloudCoverMean: 0.6 };
+// 精算态的真实形状：出参顺序 = 列序，CUSTOM 打头，后接 LATEST / SHARPEST / CHEAPEST 三套同池对照。
+const cheapest = { ...custom, key: 'CHEAPEST', sceneCount: 640, coveragePercent: 72.6, uncoveredAreaKm2: 15140,
+  estimatedAmount: 3215700, dateFrom: '2024-11-01', dateTo: '2026-10-01', gsdMin: 0.5, gsdMax: 2.0,
+  cloudCoverMax: 20, cloudCoverMean: 4.1 };
 const payload = { mode: 'custom', pool: { candidateCount: 861, usableCount: 561, skippedByCloud: 0,
   skippedByFilter: 299, skippedNoGeometry: 1, skippedNoIntersection: 0, effectiveCloudCoverMax: 100,
   regionAreaKm2: 55226.95, coveredAreaKm2: 36625.09, coveragePercent: 66.32 },
-  candidatePoolLimit: 100, poolAtLimit: true, schemes: [latest, custom, sharpest],
-  returnedCount: 3, truncated: false, relaxation: { kind: 'CLOUD_COVER_MAX', value: 26, coveragePercent: 100 } };
+  candidatePoolLimit: 100, poolAtLimit: true, schemes: [custom, latest, sharpest, cheapest],
+  returnedCount: 4, truncated: false, relaxation: { kind: 'CLOUD_COVER_MAX', value: 26, coveragePercent: 100 } };
 
 /** 12 套预设：键与顺序取自后端 `SceneSchemeKey.presetKeys()`（VALUE 排在第 11）。 */
 const presetKeys = ['LATEST', 'SHARPEST', 'CLEAREST', 'CHEAPEST', 'SHARP_CLEAN', 'CLEAN_SHARP',
@@ -109,14 +113,31 @@ async function withCard(run, { callId = 'call-1', result = payload, phase = 'res
   }
 }
 
-test('三套并排：左中右三列各按 key 命名，对照套标"对照"', async () => {
+test('四列并排：CUSTOM + 三套同池对照，全在且顺序与出参一致', async () => {
+  assert.deepEqual(payload.schemes.map((scheme) => scheme.key),
+    ['CUSTOM', 'LATEST', 'SHARPEST', 'CHEAPEST'], '夹具自检：出参顺序就是这一串');
   await withCard(async (page) => {
     const headers = await page.getByRole('columnheader').allInnerTexts();
     assert.deepEqual(headers.slice(1).map((text) => text.replace(/\s+/g, ' ').trim()),
-      ['时相最新 对照', '你的条件', '最清晰 对照']);
+      ['你的条件', '时相最新 对照', '最清晰 对照', '最省 对照']);
     const metrics = await page.locator('td.wd-sc-metric').allInnerTexts();
     assert.deepEqual(metrics, ['覆盖率', '景数', '时相', '分辨率', '云量', '未覆盖', '金额']);
+    // 四列的读数各来自各自那一套：抽"景数"一行，四列数字必须是四套的 sceneCount。
+    const scenes = await page.locator('tbody tr')
+      .filter({ has: page.locator('td.wd-sc-metric', { hasText: /^景数$/ }) })
+      .locator('td.wd-sc-val').allInnerTexts();
+    assert.deepEqual(scenes.map((text) => text.trim()), ['235景', '312景', '118景', '640景']);
   });
+});
+
+test('列序跟着出参走，不按 key 重排', async () => {
+  const shuffled = [sharpest, custom, latest, cheapest];
+  await withCard(async (page) => {
+    const headers = await page.getByRole('columnheader').allInnerTexts();
+    assert.deepEqual(headers.slice(1).map((text) => text.replace(/\s+/g, ' ').trim()),
+      ['最清晰 对照', '你的条件', '时相最新 对照', '最省 对照'],
+      '主推按 key 认（还在"你的条件"那一列），但列的位置照出参顺序');
+  }, { result: { ...payload, schemes: shuffled } });
 });
 
 test('金额最响：主推那套的金额同时出现在标题行与金额行，下界带 ≥', async () => {
@@ -137,11 +158,13 @@ test('琥珀只给"不能直接当结论用"的两个数：金额下界与预算
       .filter({ has: page.locator('td.wd-sc-metric', { hasText: new RegExp(`^${label}$`) }) });
     // 覆盖率一律不上琥珀（盖不满是常态）：三列全查一遍，防的是"顺手把 tone 加回来"。
     const coverage = rowOf('覆盖率').locator('td.wd-sc-val');
-    for (const index of [0, 1, 2]) assert.notEqual(await color(coverage.nth(index)), WARN, '覆盖率不该带琥珀');
+    for (const index of [0, 1, 2, 3]) assert.notEqual(await color(coverage.nth(index)), WARN, '覆盖率不该带琥珀');
+    // 列序与出参一致：0 = CUSTOM、1 = LATEST、2 = SHARPEST、3 = CHEAPEST。
     const amounts = rowOf('金额').locator('td.wd-sc-val');
-    assert.equal(await color(amounts.nth(0)), WARN, 'LATEST：预算截断了 ⇒ 金额整格琥珀');
-    assert.notEqual(await color(amounts.nth(1)), WARN, 'CUSTOM：既没截断也不是下界 ⇒ 不上琥珀');
+    assert.notEqual(await color(amounts.nth(0)), WARN, 'CUSTOM：既没截断也不是下界 ⇒ 不上琥珀');
+    assert.equal(await color(amounts.nth(1)), WARN, 'LATEST：预算截断了 ⇒ 金额整格琥珀');
     assert.equal(await color(amounts.nth(2).locator('.wd-sc-loose')), WARN, 'SHARPEST：下界的「≥」带琥珀');
+    assert.notEqual(await color(amounts.nth(3)), WARN, 'CHEAPEST：不上琥珀');
   });
 });
 

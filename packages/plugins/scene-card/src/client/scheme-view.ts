@@ -8,7 +8,8 @@
  * 卡片 —— 绝不渲染半张卡（spec §6 的硬要求）。因此本函数对每个**要显示的**读数都做形状
  * 检查，任何一个缺失都让整份回落；对**不显示的**字段一律不读（见下方"刻意不读"）。
  *
- * 严格度的分界只有一条：**缺 → 少一块，有但读不懂 → 整份回落**。
+ * 严格度的分界只有一条：**缺 → 少一块，有但读不懂 → 整份回落**
+ * （`mode` 属于后者：它是"哪条路"的判据，读不懂就无从决定画几列）。
  * 可选面（`pool`、旧后端没有的 `scenes`）缺席时优雅降级；但键在那儿而内容读不懂，
  * 说明后端在讲一件我不认识的事 —— 那种情况下少画一块就是撒谎，宁可回去画通用卡片。
  */
@@ -85,7 +86,6 @@ export interface DeliverableView {
    *
    * 这是"要不要并排画"的判据，不是版式偏好：12 套预设是一张**菜单**，
    * 用户在对话里想看的是"先给我一套"，而不是一张 12 列的表（技能第三节同口径）。
-   * `mode` 缺失或读不懂时为 `false` —— 那时按老行为画拿到的那几套。
    */
   readonly presets: boolean;
   /** 池诊断；出参没给或给不全时为 `undefined`，卡照样画得出来。 */
@@ -225,6 +225,10 @@ export function buildDeliverableView(input: DeliverableInput | undefined): Deliv
   if (!isRecord(payload)) return undefined;
   const rawSchemes = payload.schemes;
   if (!Array.isArray(rawSchemes)) return undefined;
+  // 后端只发这两个值（`RecommendTools`：`custom ? MODE_CUSTOM : MODE_PRESETS`）。
+  // 读不懂它是哪条路 ⇒ 这份出参不是我以为的形状 ⇒ 整份回落，而不是挑一种猜着画。
+  const mode = payload.mode;
+  if (mode !== 'custom' && mode !== 'presets') return undefined;
 
   const schemes: SchemeView[] = [];
   for (const raw of rawSchemes) {
@@ -240,7 +244,7 @@ export function buildDeliverableView(input: DeliverableInput | undefined): Deliv
   return {
     schemes,
     primary,
-    presets: payload.mode === 'presets',
+    presets: mode === 'presets',
     pool,
     next: nextAction(payload, primary, pool),
   };
