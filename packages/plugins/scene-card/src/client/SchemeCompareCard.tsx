@@ -217,12 +217,13 @@ export function SchemeTable({ schemes, primary }: {
 }
 
 /**
- * 预设菜单的提示行：12 套里画了一套，另 11 套不铺开。
+ * 预设菜单的提示行：12 套里画了一套，另 11 套不铺开。**卡与面板共用这一句**
+ * （面板那边也走这条路，两个面的文案不会各写一版）。
  *
  * 这是**界面文案**，不是助手该说的话 —— 技能里不写卡片规则（spec §4.6），
  * 这里只是把"还能怎么用"说给看得见这张卡的人。
  */
-function PresetHint({ total }: { readonly total: number }): ReactNode {
+export function PresetHint({ total }: { readonly total: number }): ReactNode {
   return (
     <div className="wd-sc-more">
       还有 {total - 1} 套预设没列出 · 说一个偏好（更省 / 更清晰 / 云更少），

@@ -10,6 +10,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { apply } from '../dist/client.js';
+import { forgetPanelBindings, panelOpenFacts, rememberPanelBinding }
+  from '../dist/client/panel-binding.js';
 
 const KIND = 'workdsh-scene-deliverable';
 const SESSION = 'session-1';
@@ -28,8 +30,29 @@ const chatOf = (nodes) => ({
   },
 });
 
-/** 本插件那个 tab 的记录；`callId` 为 undefined 表示"开着但没绑调用"。 */
-const tabOf = (callId) => ({ kind: KIND, id: KIND, navigation: { params: callId === undefined ? undefined : { callId } } });
+/**
+ * 本插件那个 tab 的 layout 记录 —— **照 `tabsIn()` 真正返回的形状**：
+ * dockkit 的 `{id, kind, title, contentId}`，**没有 `navigation`**。
+ * （夹具若顺手补一个 `navigation: {params}`，"绑定值从哪儿读"这个错就再也测不出来了。）
+ */
+const layoutTab = () => ({ id: KIND, kind: KIND, title: '交付物', contentId: `dsh-resource://${KIND}` });
+
+test('两维从**真实的 layout 记录**推出来：布局记录里没有绑定值，绑定值是我们自己记的账', () => {
+  // 这一条是冲着"从 `tab.navigation.params` 读绑定值"那个错来的：`tabsIn()` 的记录里
+  // 根本没有 `navigation`，按它读会**恒为 undefined**，`alreadyOpen` 就永远不可能是 true。
+  // 夹具刻意用真形状（只有 id/kind/title/contentId），所以那个错在这里必红。
+  const tabs = [layoutTab()];
+  assert.deepEqual(panelOpenFacts(tabs, KIND, SESSION, 'call-a'),
+    { alreadyOpen: false, boundToOtherCall: true }, '开着但还没记过绑定 ⇒ 不夺焦点');
+  rememberPanelBinding(SESSION, 'call-a');
+  assert.deepEqual(panelOpenFacts(tabs, KIND, SESSION, 'call-a'),
+    { alreadyOpen: true, boundToOtherCall: false }, '记过、且就是这一件 ⇒ 已开着');
+  assert.deepEqual(panelOpenFacts(tabs, KIND, SESSION, 'call-b'),
+    { alreadyOpen: false, boundToOtherCall: true }, '记的是别人 ⇒ 不夺焦点');
+  forgetPanelBindings();
+  assert.deepEqual(panelOpenFacts([], KIND, SESSION, 'call-a'),
+    { alreadyOpen: false, boundToOtherCall: false }, '没开着 ⇒ 两维都不成立');
+});
 
 /**
  * 一个只实现本插件用到的那几个面的假 ctx。`window` 是全局，自动弹要自测视口
@@ -42,17 +65,16 @@ function harness({ tabs = [], chat, width = 1440, config } = {}) {
   const disposers = [];
   const ctx = {
     config,
-    // `effect` 的回调立刻跑，返回的清理件收起来 —— 卸载时真的会跑（`openedTurns` 就靠它清）。
+    // `effect` 的回调立刻跑，返回的清理件收起来 —— 卸载时真的会跑（两张账都靠它清）。
     effect: (fn) => { const disposer = fn(); if (typeof disposer === 'function') disposers.push(disposer); return () => {}; },
     sidebarRightTabs: { register: () => () => {} },
     sidebarRight: {
       tabsIn: (sessionId) => (sessionId === SESSION ? open : []),
-      // 真的 `openTabIn` 会把 tab 放到那里（重复开是**重绑**，Task 1 §9-8），假的也照做。
+      // 真的 `openTabIn` 会把 tab 记进 layout（重复开是**重绑**，Task 1 §9-8），假的也照做：
+      // 只放 layout 记录，**不放 navigation** —— 绑定值不在那儿。
       openTabIn: (sessionId, kind, options) => {
         opened.push({ sessionId, kind, params: options?.params });
-        const existing = open.findIndex((tab) => tab.kind === kind);
-        const record = { kind, id: kind, navigation: { params: options?.params, revision: 1 } };
-        if (existing === -1) open.push(record); else open[existing] = record;
+        if (!open.some((tab) => tab.kind === kind)) open.push(layoutTab());
       },
     },
     uiConversation: { binding: () => ({ target: () => ({ getSnapshot: () => chat }) }) },
@@ -64,15 +86,17 @@ function harness({ tabs = [], chat, width = 1440, config } = {}) {
   const previous = Object.getOwnPropertyDescriptor(globalThis, 'window');
   Object.defineProperty(globalThis, 'window', { value: { innerWidth: width }, configurable: true });
   apply(ctx);
+  const toolview = () => registered.get('tool.call.toolview').options.inject(SESSION);
   return {
     opened,
     registered,
     /** 用户把面板关掉了：tab 记录消失，但"本轮弹过"那笔账还在。 */
     close: () => { open.length = 0; },
-    autoOpen: (callId, hasDeliverable) => registered.get('tool.call.toolview')
-      .options.inject(SESSION).autoOpenDeliverable(callId, hasDeliverable),
+    /** 卡底「查看详情」：把面板重绑到某一次调用（**唯一**写下绑定值的地方）。 */
+    viewDetail: (callId) => { toolview().openDeliverable(callId); },
+    autoOpen: (callId, hasDeliverable) => toolview().autoOpenDeliverable(callId, hasDeliverable),
     restore: () => {
-      // 插件卸载：清理件跑一遍 —— 模块级的"哪一轮弹过"因此不跨用例（真机上不跨重载）。
+      // 插件卸载：清理件跑一遍 —— 模块级的账因此不跨用例（真机上不跨重载）。
       for (const disposer of disposers.reverse()) disposer();
       if (previous === undefined) delete globalThis.window;
       else Object.defineProperty(globalThis, 'window', previous);
@@ -131,15 +155,25 @@ test('轮次的账按会话隔离：另一个会话不受影响', () => {
 });
 
 test('面板已开着（且就绑着这一件）→ 不弹，不把它再展开一次', () => {
-  withHarness({ tabs: [tabOf('call-a')], chat: chatOf([node('call-a', 1)]) }, (h) => {
+  // 「已开着且就是这一件」由**卡的「查看详情」**造成：那是写下绑定值的唯一入口。
+  withHarness({ chat: chatOf([node('call-a', 1)]) }, (h) => {
+    h.viewDetail('call-a');
     assert.equal(h.autoOpen('call-a', true), false);
-    assert.deepEqual(h.opened, []);
+    assert.equal(h.opened.length, 1, 'openTabIn 只该被「查看详情」调用那一次');
   });
 });
 
 test('面板开着但绑的是别的 callId → 不夺焦点（用户可能正在看历史那一件）', () => {
-  withHarness({ tabs: [tabOf('call-old')], chat: chatOf([node('call-a', 1), node('call-old', 1)]) }, (h) => {
+  withHarness({ chat: chatOf([node('call-a', 1), node('call-old', 1)]) }, (h) => {
+    h.viewDetail('call-old'); // 用户点了历史那一件的「查看详情」
     assert.equal(h.autoOpen('call-a', true), false, '绑的不是这一件就不动它');
+    assert.equal(h.opened.length, 1);
+  });
+});
+
+test('面板开着但我们不知道它绑谁（刚重载 / 布局被恢复）→ 也不夺焦点', () => {
+  withHarness({ tabs: [layoutTab()], chat: chatOf([node('call-a', 1)]) }, (h) => {
+    assert.equal(h.autoOpen('call-a', true), false, '不知道它绑着谁就不猜');
     assert.deepEqual(h.opened, []);
   });
 });
@@ -166,7 +200,7 @@ test('读不出轮次（会话没绑定 / chat 视图没注册）→ 不记账�
   withHarness({ chats: undefined, chat: undefined }, (h) => {
     assert.equal(h.autoOpen('call-a', true), true, '读不出轮次不该把弹这件事一起否掉');
     assert.equal(h.autoOpen('call-b', true), false,
-      '第二次仍然不弹 —— 因为第一次已经把 tab 开上了（这条兜底的账在 tabsIn 那边）');
+      '第二次仍然不弹 —— 第一次已经把 tab 开上并绑给了 call-a，这一件是"绑着别的"');
   });
 });
 
@@ -191,12 +225,10 @@ test('会话没绑定（binding 抛）也不炸：按"读不出轮次"处理', (
   }
 });
 
-test('门户地址从插件配置里来；没配就是 undefined（面板据此关掉导出按钮）', () => {
-  withHarness({ config: { portalOrigin: 'https://portal.example.test/scene-search' } }, (h) => {
-    assert.equal(h.registered.get('sidebar.right.pane.tab').options.inject(SESSION).portalOrigin,
-      'https://portal.example.test/scene-search');
-  });
+test('面板拿得到「读门户地址」那一跳（值由宿主配置经路由给过来，不是写死在组件里）', () => {
   withHarness({}, (h) => {
-    assert.equal(h.registered.get('sidebar.right.pane.tab').options.inject(SESSION).portalOrigin, undefined);
+    const face = h.registered.get('sidebar.right.pane.tab').options.inject(SESSION);
+    assert.equal(typeof face.loadPortalOrigin, 'function');
+    assert.equal(face.loadPortalOrigin() instanceof Promise, true, '读的是宿主那条路由，异步拿');
   });
 });

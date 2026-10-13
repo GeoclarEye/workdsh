@@ -233,3 +233,30 @@ test('一套方案都没有（条件筛完池为空）：不画这张卡，回�
     assert.equal(await page.locator('.wd-sc').count(), 0);
   }, { result: { ...payload, schemes: [] } });
 });
+
+test('出结果时**问一次**自动弹，且"有没有交付物"含"有方案"（空池为 false）', async () => {
+  // 这一条把"卡 → 自动弹"这半段接上：卡的判据不止"视图模型认得出形状"。
+  // 空池时视图模型**有返回**（`schemes: []`），但一层方案都没有 ⇒ 必须是 false ——
+  // 照"有没有返回"写，用户会遇到"面板为一个没有东西可展示的结果自动弹开"。
+  await withCard(async (page) => {
+    await page.waitForFunction(() => window.__autos.length === 1);
+    assert.deepEqual(await page.evaluate(() => window.__autos), [['call-7a3f', true]]);
+  }, { callId: 'call-7a3f' });
+
+  await withCard(async (page) => {
+    await page.waitForFunction(() => window.__autos.length === 1);
+    assert.deepEqual(await page.evaluate(() => window.__autos), [['call-1', false]],
+      '空池：认得出形状，但没有可展示的方案');
+  }, { result: { ...payload, schemes: [] } });
+
+  await withCard(async (page) => {
+    await page.waitForFunction(() => window.__autos.length === 1);
+    assert.deepEqual(await page.evaluate(() => window.__autos), [['call-1', false]],
+      '形状不认识：同上');
+  }, { result: { nope: 1 } });
+
+  await withCard(async (page) => {
+    await page.waitForTimeout(300);
+    assert.deepEqual(await page.evaluate(() => window.__autos), [], '还没出结果就不问');
+  }, { phase: 'start' });
+});

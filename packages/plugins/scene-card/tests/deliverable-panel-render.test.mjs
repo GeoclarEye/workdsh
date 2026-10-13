@@ -14,7 +14,7 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { custom, payload } from './fixtures/geoclar-recommend.mjs';
+import { custom, payload, presets } from './fixtures/geoclar-recommend.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const packageRoot = resolve(here, '..');
@@ -92,7 +92,7 @@ const ROOT_TOKENS = `--dsw-alias-bg-base:#121212;--dsw-alias-bg-layer-1:#1a1a1a;
 --dsw-alias-state-business-primary:#11b7c8;--dsw-alias-state-warn-primary:#efb44f`;
 
 /** 渲染面板并断言。`nodes` 默认是那一轮真实的一串调用。 */
-async function withPanel(run, { callId = 'call-recommend', nodes = ROUND, portalOrigin } = {}) {
+async function withPanel(run, { callId = 'call-recommend', nodes = ROUND, portalOrigin, withoutUseChat } = {}) {
   const browser = await chromium.launch({ headless: true });
   try {
     // 376×480 是"右栏确实装不下"的那个高度：正文会滚，页脚才断言得动它不动。
@@ -104,7 +104,7 @@ async function withPanel(run, { callId = 'call-recommend', nodes = ROUND, portal
     await page.goto('http://127.0.0.1:19114/');
     await page.addScriptTag({ content: bundle.outputFiles[0].text });
     // 函数过不了 Playwright 的序列化，所以会话快照在页面**里面**拼。
-    await page.evaluate(({ raw, bound, origin }) => {
+    await page.evaluate(({ raw, bound, origin, withoutChat }) => {
       const chat = {
         order: raw.map((entry) => entry.key),
         nodes: {
@@ -120,11 +120,13 @@ async function withPanel(run, { callId = 'call-recommend', nodes = ROUND, portal
           navigation: { params: { callId: bound }, revision: 1 } } }),
         // `useChat` 在真宿主里是框架绑的 selector hook；这里给一个同样形状的假件，
         // 好让"面板读对话数据"这件事在**渲染层**也能被断言（读法本身另有纯函数测试）。
-        useChat: (selector) => selector(chat),
+        ...(withoutChat ? {} : { useChat: (selector) => selector(chat) }),
         inputActions: { setDraft: (text) => { window.__draft = text; } },
-        ...(origin === undefined ? {} : { portalOrigin: origin }),
+        // 门户地址是**异步**来的（宿主配置 → 同源路由）；这里喂一个同样形状的假 loader，
+        // 好让"配了就能用 / 没配就关着"两态都能断言。
+        loadPortalOrigin: async () => origin,
       });
-    }, { raw: nodes, bound: callId, origin: portalOrigin });
+    }, { raw: nodes, bound: callId, origin: portalOrigin, withoutChat: withoutUseChat === true });
     await run(page);
   } finally {
     await browser.close();
@@ -280,4 +282,26 @@ test('面板绑的那一件不在当前对话窗口里：不画半张，给一�
     assert.equal(await page.locator('.wd-dp-block').count(), 0);
     assert.equal(await page.locator('.wd-dp-foot').count(), 0, '没有交付物就没有行动入口');
   }, { callId: 'call-nope' });
+});
+
+test('预设态与卡一致：**不铺那 11 套**，只给主推 + 一行提示（裁定 4）', async () => {
+  // 两个面互相矛盾正是裁定 4 禁止的：卡在预设态只画主推，面板也必须只画主推。
+  await withPanel(async (page) => {
+    assert.equal(await page.locator('.wd-dp-seg').count(), 0, '预设态没有"四选一"这回事');
+    assert.equal(await page.locator('.wd-dp-artifact .wd-dp-t').innerText(), '性价比',
+      'presetKeys() 里 VALUE 排第 11，给的是它而不是打头的 LATEST');
+    assert.equal(await page.getByText(/还有 11 套预设没列出/).count(), 1, '与卡同一句提示');
+    assert.equal(await page.getByText('时相最新', { exact: true }).count(), 0, '另外 11 套不铺开');
+    assert.equal(await page.getByText('最省', { exact: true }).count(), 0);
+  }, { nodes: withResult(presets) });
+});
+
+test('会话标准件拿不到时：少画那一块、不抛（按"读不出这一件"降级）', async () => {
+  const errors = [];
+  await withPanel(async (page) => {
+    page.on('pageerror', (error) => errors.push(error.message));
+    assert.equal(await page.locator('.wd-dp-empty').count(), 1);
+    assert.equal(await page.locator('.wd-dp-block').count(), 0);
+    assert.deepEqual(errors, [], '不该有页面错误');
+  }, { withoutUseChat: true });
 });

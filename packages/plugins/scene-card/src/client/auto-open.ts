@@ -68,7 +68,7 @@ export function shouldAutoOpen(facts: AutoOpenFacts): boolean {
  * 是否严格相等**未证**。所以判定按"明显更窄"来取 —— 宁可少弹一次（用户自己点「查看详情」），
  * 也不要在没有把握的情况下把对话盖掉。
  */
-export const NARROW_VIEWPORT_WIDTH = 768;
+const NARROW_VIEWPORT_WIDTH = 768;
 
 /** 自测视口得到的窄屏判定；`window` 不可用时（SSR/测试）按"不窄"处理。 */
 export function viewportIsNarrow(width: number | undefined): boolean {

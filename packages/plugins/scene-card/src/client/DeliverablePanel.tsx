@@ -16,10 +16,10 @@
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots';
 import type {} from '@deepseek-ai/dsh-client-ui-tool/client';
 import type { ReactNode } from 'react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 // 方案的显示名（`label`）与读数网格（`SchemeMetrics`）都从卡那边来 —— 同一个东西两个面
 // 叫同一个名字、读同一份数；在这里再抄一遍就会漂移。
-import { deliverableViewOfResultBlock, label, SchemeMetrics } from './SchemeCompareCard.js';
+import { deliverableViewOfResultBlock, label, PresetHint, SchemeMetrics } from './SchemeCompareCard.js';
 import type { DeliverableView, SchemeView } from './scheme-view.js';
 import { formatDuration, readTurnTools, toolLabel } from './turn-tools.js';
 import type { TurnTools } from './turn-tools.js';
@@ -31,12 +31,15 @@ import { schemeCardCss } from './styles.js';
  */
 export interface PanelInjected {
   /**
-   * 门户地址（spec §4.4「导出」：**只跳门户、不做下载**）。
+   * 读一次门户地址（spec §4.4「导出」：**只跳门户、不做下载**）。
    *
-   * 没配就**不放一个点了没反应的按钮** —— 见 {@link DeliverablePanel} 的导出按钮：
-   * 无地址时它是 `disabled` 的，并且把"为什么"写在 `title` 上。
+   * 值来自宿主的插件配置，经 `/api/workdsh-scene-card` 送过来（客户端半区读不到 cordis 配置，
+   * 见 `client/portal.ts`）。由注册点注入，组件自己不碰 `fetch`。
+   *
+   * 没配（或读不到）就**不放一个点了没反应的按钮**：无地址时它是 `disabled` 的，
+   * 并且把"为什么"写在 `title` 上。
    */
-  readonly portalOrigin?: string | undefined;
+  readonly loadPortalOrigin?: (() => Promise<string | undefined>) | undefined;
 }
 
 export type DeliverablePanelProps = PropsRuntime<'sidebar.right.pane.tab'> & PanelInjected;
@@ -133,29 +136,37 @@ function Scenes({ scheme }: { readonly scheme: SchemeView }): ReactNode {
  * 方案块：顶部分段器四选一 + 这一套的读数（竖排网格，复用卡的那一份）。
  *
  * 默认选中**主推**那一套；切换只换读数，不改变面板绑定的 `callId`（那是卡的「查看详情」的事）。
+ *
+ * **预设态与卡一致：只给主推那一套 + 一行提示，不铺那 11 套**（裁定 4）。12 套预设是一张
+ * *菜单*，不是四套可比的方案 —— 铺成 12 个分段器按钮既不是卡在讲的事，也不是面板该讲的事。
  */
 function Schemes({ view }: { readonly view: DeliverableView }): ReactNode {
   const primaryKey = view.primary?.key;
   // 选中的那一套记在组件状态里；**换绑到别的调用时整个子树重挂**（面板那边用 `key={callId}`），
   // 所以不会带着上一件的选择。
   const [selected, setSelected] = useState<string | undefined>(undefined);
-  const active = view.schemes.find((scheme) => scheme.key === selected)
-    ?? view.schemes.find((scheme) => scheme.key === primaryKey)
-    ?? view.schemes[0];
+  const active = view.presets
+    // 预设态没有"切换"这回事：给的就是主推那套（`selected` 在这里永远用不上）。
+    ? view.primary ?? view.schemes[0]
+    : view.schemes.find((scheme) => scheme.key === selected)
+      ?? view.schemes.find((scheme) => scheme.key === primaryKey)
+      ?? view.schemes[0];
   if (active === undefined) return null;
   const isPrimary = active.key === primaryKey;
   return (
     <section className="wd-dp-block">
       <p className="wd-dp-label">方案</p>
-      <div className="wd-dp-seg" role="tablist" aria-label="方案">
-        {view.schemes.map((scheme) => (
-          <button key={scheme.key} type="button" role="tab"
-            aria-selected={scheme.key === active.key}
-            onClick={() => { setSelected(scheme.key); }}>
-            {label(scheme.key)}
-          </button>
-        ))}
-      </div>
+      {view.presets || view.schemes.length < 2 ? null : (
+        <div className="wd-dp-seg" role="tablist" aria-label="方案">
+          {view.schemes.map((scheme) => (
+            <button key={scheme.key} type="button" role="tab"
+              aria-selected={scheme.key === active.key}
+              onClick={() => { setSelected(scheme.key); }}>
+              {label(scheme.key)}
+            </button>
+          ))}
+        </div>
+      )}
       <div className="wd-dp-artifact" role="tabpanel">
         <div className="wd-dp-ahead">
           <span className="wd-dp-t">{label(active.key)}</span>
@@ -165,6 +176,8 @@ function Schemes({ view }: { readonly view: DeliverableView }): ReactNode {
         <SchemeMetrics scheme={active} />
         <Scenes scheme={active} />
       </div>
+      {/* 与卡**同一句**提示（同一个组件），不各写一版文案。 */}
+      {view.presets && view.schemes.length > 1 ? <PresetHint total={view.schemes.length} /> : null}
     </section>
   );
 }
@@ -197,11 +210,28 @@ function Tools({ turn }: { readonly turn: TurnTools }): ReactNode {
 export function DeliverablePanel(props: DeliverablePanelProps): ReactNode {
   const info = props.useTabInfo();
   const callId = readBoundCallId(info.tab.navigation.params);
-  const turn = props.useChat((snapshot) => readTurnTools(snapshot, callId ?? ''), sameTurnTools);
+  /*
+   * 会话级标准件由框架保证（`SessionStandardProps` 的合并声明如此），但这一条**只在类型层面
+   * 成立** —— 拿不到就少画一块、而不是让整个 tab 抛异常白掉（与"形状不认识就不画"同一条规矩）。
+   * 这是**属性**上的守卫，不是随渲染变化的分支：`useChat` 由框架绑一次，同一 mount 内不会变。
+   */
+  const useChat = typeof props.useChat === 'function' ? props.useChat : undefined;
+  const turn = useChat === undefined ? undefined
+    : useChat((snapshot) => readTurnTools(snapshot, callId ?? ''), sameTurnTools);
   const bound = turn?.tools.find((tool) => tool.callId === callId);
   const view = bound === undefined ? undefined : deliverableViewOfResultBlock(bound.root);
   const next = view === undefined ? undefined : nextActionOf(view);
-  const portal = props.portalOrigin;
+  // 门户地址是**异步**来的（宿主配置 → 同源路由）：拿到之前按钮是关的，不是"点了没反应"。
+  const loadPortalOrigin = props.loadPortalOrigin;
+  const [portal, setPortal] = useState<string | undefined>(undefined);
+  useEffect(() => {
+    if (typeof loadPortalOrigin !== 'function') return undefined;
+    const lifetime = new AbortController();
+    void loadPortalOrigin().then((value) => {
+      if (!lifetime.signal.aborted) setPortal(value);
+    }).catch(() => { /* 读不到就是没配：按钮保持关着 */ });
+    return () => { lifetime.abort(); };
+  }, [loadPortalOrigin]);
 
   if (view === undefined || view.primary === undefined || turn === undefined) {
     return (
