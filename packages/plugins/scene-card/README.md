@@ -1,6 +1,6 @@
 # WorkDSH 交付物（场景方案）
 
-状态：**Alpha 骨架**。本步只建包与构建接线，尚未注册任何卡片或面板。
+状态：**Alpha**。对话内的简版对比卡已注册（`tool.call.toolview`，按 wire 工具名键控）；右侧交付物面板尚未落地。
 
 把 Agent 产出的场景方案（`geoclar_recommend_schemes` 的出参）摆成**两个面**：对话里的一张简版对比卡，和右侧栏的交付物详情面板。两面读**同一份视图模型**，不各自解释一遍工具出参。
 
@@ -13,18 +13,20 @@
 
 [规则](../../../apps/web/AGENTS.md)、[验收要求](../../../apps/web/docs/ACCEPTANCE.md)、[契约](../../../apps/web/docs/CONTRACTS.md)、[插件交付](../../../apps/web/docs/PLUGIN-DELIVERY.md)。
 
-## 两个注册点、一个插件
+## 一个插件、两个面
 
-通道类型与面板内容都在同一个插件里注册，不拆成两个包：
+两个面都在同一个插件里注册，不拆成两个包：
 
-1. `ctx.sidebarRightTabs.register({ id, kind, title })` 声明 tab 类型；
-2. `ctx.slots.register({ name: 'sidebar.right.pane.tab', key: <同一个 id> }, Component)` 提供该 tab 的内容。
+1. **对话内的卡**：`ctx.slots.register({ name: 'tool.call.toolview', key: 'mcp__geoclar__geoclar_recommend_schemes' }, SchemeCompareCard)`。这个 keyed slot 的 `key` 是 **wire 工具名**（`mcp__<连接器 serverName>__<工具名>`），连接器不叫 `geoclar` 就键不上，自动回落官方通用卡片。
+2. **右侧面板**：`ctx.sidebarRightTabs.register({ id, kind, title })` 声明 tab 类型，再由 `ctx.slots.register({ name: 'sidebar.right.pane.tab', key: <同一个 id> }, Component)` 提供内容。`key` 与 `id` 必须一致。
 
-`key` 与 `id` 必须一致 —— 后者是前者在 `sidebar.right.pane.tab` 席位上的注册名。
+卡底的「查看详情」调 `ctx.sidebarRight.openTabIn(sessionId, 'workdsh-scene-deliverable', { params: { callId } })`，把面板绑到**这一次**调用上 —— 面板是按调用的活状态，几天后早换成了别的东西，历史那一件只能从它自己那张卡回去。
 
 ## 数据边界
 
-视图模型是纯函数，只吃工具结果、不取网络：认得出形状就给读数，认不出就返回 `undefined`，由调用方回落到官方通用卡片。工具出参未声明的字段（如未盖满 WKT、计费面积）不渲染，也不假装有。
+视图模型（`src/client/scheme-view.ts`）是纯函数，只吃工具结果、不取网络：认得出形状就给读数，认不出就返回 `undefined`，由调用方回落到官方通用卡片。工具出参未声明的字段（如未盖满 WKT、计费面积）不渲染，也不假装有。
+
+出参里的 `scenes` 是**可选**的：老后端没有这个键时读成空清单（新卡装在旧后端前面只是少一列景），不当作形状不认识。
 
 ## 验收与下一步
 
