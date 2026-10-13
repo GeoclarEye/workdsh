@@ -44,9 +44,14 @@ const TYPE_SCENE_SCHEMES = 'scene-schemes';
  *
  * 这里刻意用一张表而不是遍历 `args`：多抄一个键就是把不属于意图的东西写进凭据，
  * 而凭据是给下游当输入用的。表外的键一律不写。
+ *
+ * 这张表等于 `geoclar_recommend_schemes` 的**全部条件入参**（`wkt` 单独放在 `intent.aoi`）：
+ * 核过该工具的 10 个 `@McpToolParam`，除 `wkt` 外正好这 9 个。
+ * `excludeSceneIds`（"换一景"排掉的景）也在内 —— 漏了它，"排掉那一景之后的结果"
+ * 就无法从凭据复现，那它就不是完整的意图。
  */
 const CONDITION_KEYS = ['maxCloud', 'maxGsd', 'budget', 'dateFrom', 'dateTo',
-  'datasetIds', 'offNadirMax', 'preferConsistent'] as const;
+  'datasetIds', 'offNadirMax', 'preferConsistent', 'excludeSceneIds'] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);

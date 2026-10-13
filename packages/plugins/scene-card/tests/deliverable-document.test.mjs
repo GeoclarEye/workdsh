@@ -61,6 +61,16 @@ test('intent 逐字抄入参：AOI + 给过的条件，未给的不出现', () =
   assert.equal('maxGsd' in built.version.intent.conditions, false);
 });
 
+test('「换一景」排掉的景也进凭据：漏了它就不是完整的意图', () => {
+  // 这张表等于该工具除 wkt 外的**全部**条件入参。少一个，"排掉那一景之后的结果"就无法复现。
+  const built = buildDeliverableDocuments({
+    callId: 'call_abc', toolName: 'mcp__geoclar__geoclar_recommend_schemes',
+    args: { ...args, excludeSceneIds: 'SVN1-02-20261008-00755433' },
+    result, subject: 's', at,
+  });
+  assert.equal(built.version.intent.conditions.excludeSceneIds, 'SVN1-02-20261008-00755433');
+});
+
 test('summary 由生产者派生：口径来自入参、读数来自主推那套', () => {
   const built = buildDeliverableDocuments({
     callId: 'c', toolName: 't', args, result, subject: 's', at });

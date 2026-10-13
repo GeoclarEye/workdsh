@@ -87,7 +87,10 @@ ssh root@39.105.35.182 'docker exec workdsh-trial sh -lc "ls -R /root/geoclar/�
 
 - 交付物→下单：依赖 geoclar 侧四件事（写工具 / raw 承载 / 写权限身份 / 方案重建），见 spec §11。
   本次对 geoclar **零接口改动**。
-- `excludeSceneIds` 未存进 `intent`（"换一景"的输入会丢）。影响重算口径，不挡下单。
+- `excludeSceneIds` 曾未存进 `intent`（"换一景"的输入会丢），**已在验证镜像构建之后补上**（见下）。
+  因此**若你验证的镜像是在该修复之前构建的**，`v1.json` 的 `intent.conditions` 里不会有
+  `excludeSceneIds` 键 —— 那是预期，不是 bug。影响的是"重算口径"，不挡下单。
+  验证用的镜像对应 `33d91da65d`；该修复是它的后继提交。
 
 ## 判据
 
