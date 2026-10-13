@@ -20,8 +20,7 @@ export const schemeCardCss = `
 .wd-sc-amount-k b{color:var(--wd-sc-accent);font-weight:600}
 .wd-sc-amount-v{font-size:20px;font-weight:600;font-variant-numeric:tabular-nums;color:var(--wd-sc-accent)}
 
-/* 列多时横向滚动而不是挤成一团：后端不带条件时会回 12 套预设，那时每列都必须读得清。 */
-.wd-sc-table-wrap{overflow-x:auto}
+/* 并排的列只有两种情况：精算那一套 + 至多三套同池对照（presets 时只画一套），所以不需要横向滚动。 */
 .wd-sc-table{width:100%;border-collapse:collapse}
 .wd-sc-table th,.wd-sc-table td{padding:8px 6px;vertical-align:baseline;border-bottom:1px solid var(--wd-sc-line)}
 .wd-sc-table tr:last-child td{border-bottom:0}
@@ -31,9 +30,12 @@ export const schemeCardCss = `
 .wd-sc-tag{display:block;font-size:10.5px;color:var(--wd-sc-muted);margin-top:1px}
 .wd-sc-metric{color:var(--dsw-alias-label-secondary);font-size:11.5px;text-align:left;padding-left:0;white-space:nowrap}
 .wd-sc-val{text-align:right;font-variant-numeric:tabular-nums;font-size:13px;white-space:nowrap}
-/* 琥珀只给"未盖满"：条与数字一起变色，别让人只看见一个彩色小条。 */
-.wd-sc-val.is-warn .wd-sc-bar i,.wd-sc-row.is-warn .wd-sc-bar i{background:var(--wd-sc-warn)}
-.wd-sc-val.is-warn .wd-sc-n,.wd-sc-row.is-warn dd{color:var(--wd-sc-warn)}
+/*
+ * 琥珀只留给"这个数不能直接当结论用"的两种情形：金额是**下界**（「≥」，见 .wd-sc-loose）、
+ * 以及预算把方案截断了（budgetCapped，整格的金额转琥珀）。覆盖率**不上琥珀** —— 盖不满是常态，
+ * 全标黄等于没有信号；高低由数字与「未覆盖」那行说。
+ */
+.wd-sc-val.is-warn,.wd-sc-row.is-warn dd{color:var(--wd-sc-warn)}
 .wd-sc-u{color:var(--wd-sc-muted);font-size:10.5px;margin-left:2px}
 /* 主推那一列：底色 + 左右描边，名字用强调色 —— 三列并排时要一眼认出"你这一套"。 */
 .wd-sc-table .is-primary{background:var(--dsw-alias-bg-layer-2);border-left:1px solid var(--wd-sc-line);border-right:1px solid var(--wd-sc-line)}
@@ -47,8 +49,9 @@ export const schemeCardCss = `
 /* 金额下界：前缀「≥」。写成琥珀是怕有人把它当成精确值读。 */
 .wd-sc-loose{color:var(--wd-sc-warn);font-weight:600}
 
-.wd-sc-pool{margin-top:11px;padding-top:10px;border-top:1px solid var(--wd-sc-line);color:var(--wd-sc-muted);font-size:11.5px;line-height:1.8}
-.wd-sc-pool .wd-sc-limit{margin-left:8px}
+/* 脚注块：提示行 / 池诊断 / 放宽建议共用一条上分隔线，一行一句。 */
+.wd-sc-cfoot{margin-top:11px;padding-top:10px;border-top:1px solid var(--wd-sc-line);color:var(--wd-sc-muted);font-size:11.5px;line-height:1.8}
+.wd-sc-cfoot .wd-sc-limit{margin-left:8px}
 .wd-sc-relax{margin:2px 0 0;color:var(--wd-sc-warn)}
 
 /* 卡底固定「查看详情」：历史可达性的唯一入口（面板是按调用的活状态，三天后早换了）。 */

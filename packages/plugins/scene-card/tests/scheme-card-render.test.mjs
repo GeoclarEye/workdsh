@@ -55,8 +55,10 @@ const custom = { key: 'CUSTOM', sceneCount: 235, coveredAreaKm2: 35984.07, cover
   budgetFullCoverageAmount: null, dateFrom: '2024-12-06', dateTo: '2026-10-09',
   gsdMin: 0.25, gsdMax: 0.5, cloudCoverMax: 33.0, cloudCoverMean: 1.33,
   scenes: [{ id: 'SVN1-02-20261008-00755433', acquiredAt: '2026-10-08 06:29:48', cloud: '13', resolution: 0.3 }] };
+// 这一套演示"预算把它截断了" ⇒ 金额整格琥珀（pricingComplete 为真，所以不是下界）。
 const latest = { ...custom, key: 'LATEST', sceneCount: 312, coveragePercent: 58.4, uncoveredAreaKm2: 22982,
-  estimatedAmount: 6120400, dateFrom: '2025-06-01', dateTo: '2026-10-01', gsdMin: 0.3, gsdMax: 0.8,
+  estimatedAmount: 6120400, budgetCapped: true, budgetFullCoverageAmount: 7111222.5,
+  dateFrom: '2025-06-01', dateTo: '2026-10-01', gsdMin: 0.3, gsdMax: 0.8,
   cloudCoverMax: 22, cloudCoverMean: 2.4 };
 const sharpest = { ...custom, key: 'SHARPEST', sceneCount: 118, coveragePercent: 41.0, uncoveredAreaKm2: 32589,
   estimatedAmount: 7980150, pricingComplete: false, dateFrom: '2025-01-01', dateTo: '2026-09-01',
@@ -66,6 +68,19 @@ const payload = { mode: 'custom', pool: { candidateCount: 861, usableCount: 561,
   regionAreaKm2: 55226.95, coveredAreaKm2: 36625.09, coveragePercent: 66.32 },
   candidatePoolLimit: 100, poolAtLimit: true, schemes: [latest, custom, sharpest],
   returnedCount: 3, truncated: false, relaxation: { kind: 'CLOUD_COVER_MAX', value: 26, coveragePercent: 100 } };
+
+/** 12 套预设：键与顺序取自后端 `SceneSchemeKey.presetKeys()`（VALUE 排在第 11）。 */
+const presetKeys = ['LATEST', 'SHARPEST', 'CLEAREST', 'CHEAPEST', 'SHARP_CLEAN', 'CLEAN_SHARP',
+  'RECENT_SHARP', 'RECENT_CLEAN', 'CLEAN_CHEAP', 'SHARP_CHEAP', 'VALUE', 'CONSISTENT'];
+const presets = { ...payload, mode: 'presets', relaxation: null,
+  schemes: presetKeys.map((key, index) => ({ ...custom, key, sceneCount: 100 + index, coveragePercent: 40 + index })) };
+
+/** 琥珀的定义色；页面里把主题令牌钉成这个值，就可以拿**算出来的颜色**做断言。 */
+const WARN = 'rgb(239, 180, 79)';
+const ROOT_TOKENS = `--dsw-alias-bg-base:#121212;--dsw-alias-bg-layer-1:#1a1a1a;--dsw-alias-bg-layer-2:#202020;
+--dsw-alias-border-l2:#303030;--dsw-alias-label-primary:#e7e7e7;--dsw-alias-label-secondary:#8a8a8a;
+--dsw-alias-label-tertiary:#6a6a6a;--dsw-alias-interactive-bg-hover:#2a2a2a;
+--dsw-alias-state-business-primary:#11b7c8;--dsw-alias-state-warn-primary:#efb44f`;
 
 /** 出参在线格式里是结果块里那段文本，所以这里也照线格式喂进去（顺带钉住这条读法）。 */
 const blockOf = (result) => ({ kind: 'tool-result', seq: 1, time: 1, callId: 'call-1', call: null,
@@ -80,7 +95,8 @@ async function withCard(run, { callId = 'call-1', result = payload, phase = 'res
     const page = await browser.newPage();
     page.setDefaultTimeout(8000);
     page.on('pageerror', (error) => console.error(error.message));
-    await page.route('http://127.0.0.1:19113/', (route) => route.fulfill({ contentType: 'text/html', body: '<div id="root"></div>' }));
+    await page.route('http://127.0.0.1:19113/', (route) => route.fulfill({ contentType: 'text/html',
+      body: `<style>:root{${ROOT_TOKENS}}</style><div id="root"></div>` }));
     await page.goto('http://127.0.0.1:19113/');
     await page.addScriptTag({ content: bundle.outputFiles[0].text });
     await page.evaluate(({ block, id, stage }) => {
@@ -112,6 +128,32 @@ test('金额最响：主推那套的金额同时出现在标题行与金额行�
     assert.equal(await page.getByText('放宽到 26% 即可盖满', { exact: true }).count(), 1);
     assert.equal(await page.getByText('候选池已达上限，可能没取全', { exact: true }).count(), 1);
   });
+});
+
+test('琥珀只给"不能直接当结论用"的两个数：金额下界与预算截断', async () => {
+  await withCard(async (page) => {
+    const color = (locator) => locator.evaluate((node) => getComputedStyle(node).color);
+    const rowOf = (label) => page.locator('tbody tr')
+      .filter({ has: page.locator('td.wd-sc-metric', { hasText: new RegExp(`^${label}$`) }) });
+    // 覆盖率一律不上琥珀（盖不满是常态）：三列全查一遍，防的是"顺手把 tone 加回来"。
+    const coverage = rowOf('覆盖率').locator('td.wd-sc-val');
+    for (const index of [0, 1, 2]) assert.notEqual(await color(coverage.nth(index)), WARN, '覆盖率不该带琥珀');
+    const amounts = rowOf('金额').locator('td.wd-sc-val');
+    assert.equal(await color(amounts.nth(0)), WARN, 'LATEST：预算截断了 ⇒ 金额整格琥珀');
+    assert.notEqual(await color(amounts.nth(1)), WARN, 'CUSTOM：既没截断也不是下界 ⇒ 不上琥珀');
+    assert.equal(await color(amounts.nth(2).locator('.wd-sc-loose')), WARN, 'SHARPEST：下界的「≥」带琥珀');
+  });
+});
+
+test('12 套预设：只画主推那一套（VALUE／性价比）＋一行提示，不铺开菜单', async () => {
+  await withCard(async (page) => {
+    const headers = await page.getByRole('columnheader').allInnerTexts();
+    assert.deepEqual(headers.slice(1).map((text) => text.replace(/\s+/g, ' ').trim()), ['性价比'],
+      'presetKeys() 里 VALUE 排第 11，画的必须是它而不是打头的 LATEST');
+    assert.equal(await page.getByText(/还有 11 套预设没列出/).count(), 1);
+    assert.equal(await page.getByText('时相最新', { exact: true }).count(), 0, '另外 11 套不铺开');
+    assert.equal(await page.getByText('最省', { exact: true }).count(), 0);
+  }, { result: presets });
 });
 
 test('单套 + 池空：只有一列时照样画得出来（不因为"没得比"而回落）', async () => {

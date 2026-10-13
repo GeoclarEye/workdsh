@@ -25,9 +25,18 @@ import { schemeCardCss } from './styles.js';
  */
 type ResultBlock = Extract<ToolCallViewProps, { phase: 'result' }>['block'];
 
-/** 后端方案 key → 人话。不认识的 key 一律原样显示：编一个名字比显示 `FOO` 更糟。 */
+/**
+ * 后端方案 key → 人话（对照技能第三节那张表；后端刻意只出码）。
+ * 不认识的 key 一律原样显示：编一个名字比显示 `FOO` 更糟。
+ * `CUSTOM` 在门户上叫「推荐方案」，卡上叫「你的条件」—— 列名要与用户的条件对应。
+ */
 const SCHEME_LABELS: Record<string, string> = {
-  CUSTOM: '你的条件', CHEAPEST: '最省', SHARPEST: '最清晰', LATEST: '时相最新',
+  CUSTOM: '你的条件',
+  VALUE: '性价比', CONSISTENT: '同期一致',
+  LATEST: '时相最新', SHARPEST: '最清晰', CLEAREST: '云量最低', CHEAPEST: '最省',
+  SHARP_CLEAN: '清晰 · 兼顾干净', CLEAN_SHARP: '干净 · 兼顾清晰',
+  RECENT_SHARP: '近期 · 兼顾清晰', RECENT_CLEAN: '近期 · 兼顾干净',
+  CLEAN_CHEAP: '干净 · 兼顾省钱', SHARP_CHEAP: '清晰 · 兼顾省钱',
 };
 
 const label = (key: string): string => SCHEME_LABELS[key] ?? key;
@@ -68,15 +77,11 @@ export interface SchemeMetric {
   readonly tone?: (scheme: SchemeView) => 'warn' | undefined;
 }
 
-/** 未盖满 ⇒ 琥珀。`≥` 前缀的琥珀由 {@link amountText} 自己带（它只影响一个前缀）。 */
-const notFullyCovered = (scheme: SchemeView): 'warn' | undefined =>
-  (scheme.coveragePercent < 100 ? 'warn' : undefined);
-
 export const SCHEME_METRICS: readonly SchemeMetric[] = [
   {
     id: 'coverage',
     label: '覆盖率',
-    tone: notFullyCovered,
+    // 覆盖率**不上琥珀**：盖不满是常态，全标黄等于没有信号。高低由数字和「未覆盖」那一行说。
     read: (scheme) => (
       <span className="wd-sc-cover">
         <span className="wd-sc-bar"><i style={{ width: `${Math.max(0, Math.min(100, scheme.coveragePercent))}%` }} /></span>
@@ -109,7 +114,13 @@ export const SCHEME_METRICS: readonly SchemeMetric[] = [
     label: '未覆盖',
     read: (scheme) => <>{grouped(scheme.uncoveredAreaKm2)}<span className="wd-sc-u">km²</span></>,
   },
-  { id: 'amount', label: '金额', read: (scheme) => amountText(scheme.amount) },
+  {
+    id: 'amount',
+    label: '金额',
+    // 琥珀只留给"这个数不能直接当结论用"：预算把方案截断了。金额下界（≥）自己带琥珀。
+    tone: (scheme) => (scheme.budgetCapped ? 'warn' : undefined),
+    read: (scheme) => amountText(scheme.amount),
+  },
 ];
 
 /**
@@ -136,6 +147,61 @@ export function deliverableViewOf(props: ToolCallViewProps): DeliverableView | u
   return buildDeliverableView({ phase: props.phase, result: parseResult(props.block) });
 }
 
+/**
+ * 卡与面板共用的方案网格：一行一个指标、一列一套方案（面板把同一份读数排成竖排，见
+ * {@link SchemeMetrics}）。画哪几套由调用方给 —— 卡在 `presets` 时只画主推那一套。
+ */
+export function SchemeTable({ schemes, primary }: {
+  readonly schemes: readonly SchemeView[];
+  readonly primary: SchemeView | undefined;
+}): ReactNode {
+  return (
+    <table className="wd-sc-table">
+      <thead>
+        <tr>
+          {/* 左上角空着：评审稿如此，指标名在每行第一个格子里。 */}
+          <th className="wd-sc-col-metric" scope="col" />
+          {schemes.map((scheme) => (
+            <th key={scheme.key} scope="col" className={scheme === primary ? 'wd-sc-col is-primary' : 'wd-sc-col'}>
+              <span className="wd-sc-name">{label(scheme.key)}</span>
+              {/* 对照套标"对照"；主推那列的条件由入参得来，出参里没有，所以不编一个。 */}
+              {scheme === primary ? null : <span className="wd-sc-tag">对照</span>}
+            </th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {SCHEME_METRICS.map((metric) => (
+          <tr key={metric.id}>
+            <td className="wd-sc-metric">{metric.label}</td>
+            {schemes.map((scheme) => {
+              const classes = ['wd-sc-val'];
+              if (scheme === primary) classes.push('is-primary');
+              if (metric.tone?.(scheme) === 'warn') classes.push('is-warn');
+              return <td key={`${metric.id}:${scheme.key}`} className={classes.join(' ')}>{metric.read(scheme)}</td>;
+            })}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+/**
+ * 预设菜单的提示行：12 套里画了一套，另 11 套不铺开。
+ *
+ * 这是**界面文案**，不是助手该说的话 —— 技能里不写卡片规则（spec §4.6），
+ * 这里只是把"还能怎么用"说给看得见这张卡的人。
+ */
+function PresetHint({ total }: { readonly total: number }): ReactNode {
+  return (
+    <div className="wd-sc-more">
+      还有 {total - 1} 套预设没列出 · 说一个偏好（更省 / 更清晰 / 云更少），
+      我就按它精算一套，并附同池对照
+    </div>
+  );
+}
+
 /** 池诊断 + "还没取全"那半句。出参没给池读数时整行不出现。 */
 function PoolLine({ pool }: { readonly pool: NonNullable<DeliverableView['pool']> }): ReactNode {
   return (
@@ -143,43 +209,6 @@ function PoolLine({ pool }: { readonly pool: NonNullable<DeliverableView['pool']
       候选 {grouped(pool.candidateCount)} 景 · 可用 {grouped(pool.usableCount)} 景
       {' · '}被其他条件筛掉 {grouped(pool.skippedByFilter)} · 无轮廓 {grouped(pool.skippedNoGeometry)}
       {pool.atLimit ? <span className="wd-sc-limit">候选池已达上限，可能没取全</span> : null}
-    </div>
-  );
-}
-
-/** 卡与面板共用的方案网格（面板把它排成一列，见 `SchemeMetrics`）。 */
-export function SchemeTable({ view }: { readonly view: DeliverableView }): ReactNode {
-  const { primary } = view;
-  return (
-    <div className="wd-sc-table-wrap">
-      <table className="wd-sc-table">
-        <thead>
-          <tr>
-            {/* 左上角空着：评审稿如此，指标名在每行第一个格子里。 */}
-            <th className="wd-sc-col-metric" scope="col" />
-            {view.schemes.map((scheme) => (
-              <th key={scheme.key} scope="col" className={scheme === primary ? 'wd-sc-col is-primary' : 'wd-sc-col'}>
-                <span className="wd-sc-name">{label(scheme.key)}</span>
-                {/* 对照套标"对照"；主推那列的条件由入参得来，出参里没有，所以不编一个。 */}
-                {scheme === primary ? null : <span className="wd-sc-tag">对照</span>}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {SCHEME_METRICS.map((metric) => (
-            <tr key={metric.id}>
-              <td className="wd-sc-metric">{metric.label}</td>
-              {view.schemes.map((scheme) => {
-                const classes = ['wd-sc-val'];
-                if (scheme === primary) classes.push('is-primary');
-                if (metric.tone?.(scheme) === 'warn') classes.push('is-warn');
-                return <td key={`${metric.id}:${scheme.key}`} className={classes.join(' ')}>{metric.read(scheme)}</td>;
-              })}
-            </tr>
-          ))}
-        </tbody>
-      </table>
     </div>
   );
 }
@@ -205,22 +234,32 @@ export function SchemeCompareCard(
   const view = deliverableViewOf(props);
   // 认不出形状、或一套方案都没有 ⇒ 回落官方通用卡片（这就是回落判据的落点）。
   if (view === undefined || view.primary === undefined) return null;
+  // 不带条件时后端回 12 套预设：那是菜单，不是结论。只画主推那一套，其余用一行话说清去处。
+  const columns = view.presets ? [view.primary] : view.schemes;
   const relax = view.next?.kind === 'relax' ? view.next : undefined;
+  const notes = view.presets || view.pool !== undefined || relax !== undefined;
   return (
     <section className="wd-sc">
       <style>{schemeCardCss}</style>
       <div className="wd-sc-head">
         <h2>选景方案</h2>
-        <span className="wd-sc-sub">按你给的条件算出来，并附同池对照</span>
+        <span className="wd-sc-sub">
+          {view.presets ? '没给条件，先给一套预设' : '按你给的条件算出来，并附同池对照'}
+        </span>
         <span className="wd-sc-spacer" />
         <span className="wd-sc-amount">
           <span className="wd-sc-amount-k"><b>{label(view.primary.key)}</b> · 预估金额</span>
           <span className="wd-sc-amount-v">{amountText(view.primary.amount)}</span>
         </span>
       </div>
-      <SchemeTable view={view} />
-      {view.pool ? <PoolLine pool={view.pool} /> : null}
-      {relax ? <p className="wd-sc-relax">放宽到 {trimmed(relax.value)}% 即可盖满</p> : null}
+      <SchemeTable schemes={columns} primary={view.primary} />
+      {notes ? (
+        <div className="wd-sc-cfoot">
+          {view.presets && view.schemes.length > 1 ? <PresetHint total={view.schemes.length} /> : null}
+          {view.pool ? <PoolLine pool={view.pool} /> : null}
+          {relax ? <p className="wd-sc-relax">放宽到 {trimmed(relax.value)}% 即可盖满</p> : null}
+        </div>
+      ) : null}
       <div className="wd-sc-actions">
         <button type="button" onClick={() => { props.openDeliverable(props.callId); }}>查看详情</button>
         <span className="wd-sc-why">在右侧「交付物」里看这次检索的步骤与完整方案</span>

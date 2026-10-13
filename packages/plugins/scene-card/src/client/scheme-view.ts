@@ -73,10 +73,21 @@ export type NextAction =
 
 /** 两个面共用的交付物读数。 */
 export interface DeliverableView {
-  /** 出参里原样顺序的方案，每套一列。 */
+  /** 出参里原样顺序的方案（`presets` 时是 12 套，卡片只画主推的那一套）。 */
   readonly schemes: readonly SchemeView[];
-  /** 三套并排里被当作"你这一套"的那列：`CUSTOM`，没有就取第一套（与 `schemes` 里**同一个对象**）。 */
+  /**
+   * 主推那一套：`CUSTOM`（精算）优先，其次 `VALUE`（性价比，预设里的默认推荐），
+   * 都没有就取第一套。与 `schemes` 里是**同一个对象**。
+   */
   readonly primary?: SchemeView;
+  /**
+   * 后端走的是**不带条件**那条路（`mode=presets`，回 12 套预设）。
+   *
+   * 这是"要不要并排画"的判据，不是版式偏好：12 套预设是一张**菜单**，
+   * 用户在对话里想看的是"先给我一套"，而不是一张 12 列的表（技能第三节同口径）。
+   * `mode` 缺失或读不懂时为 `false` —— 那时按老行为画拿到的那几套。
+   */
+  readonly presets: boolean;
   /** 池诊断；出参没给或给不全时为 `undefined`，卡照样画得出来。 */
   readonly pool?: PoolView;
   /** 出参里没有下一步的读数时为 `undefined`。 */
@@ -222,9 +233,17 @@ export function buildDeliverableView(input: DeliverableInput | undefined): Deliv
     schemes.push(scheme);
   }
 
-  const primary = schemes.find((scheme) => scheme.key === 'CUSTOM') ?? schemes[0];
+  const primary = schemes.find((scheme) => scheme.key === 'CUSTOM')
+    ?? schemes.find((scheme) => scheme.key === 'VALUE')
+    ?? schemes[0];
   const pool = readPool(payload.pool, payload.poolAtLimit === true);
-  return { schemes, primary, pool, next: nextAction(payload, primary, pool) };
+  return {
+    schemes,
+    primary,
+    presets: payload.mode === 'presets',
+    pool,
+    next: nextAction(payload, primary, pool),
+  };
 }
 
 /**

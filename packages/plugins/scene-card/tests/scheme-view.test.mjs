@@ -102,6 +102,23 @@ test('没有 CUSTOM 时主推第一套', () => {
   assert.equal(v.schemes.length, 2);
 });
 
+test('预设菜单里主推 VALUE（性价比），不是排在第一个的那套', () => {
+  // 出参顺序 = presetKeys() 的顺序，LATEST 打头、VALUE 排在第 11 —— 挑错就画错那一列。
+  const presets = ['LATEST', 'SHARPEST', 'CLEAREST', 'CHEAPEST', 'VALUE', 'CONSISTENT']
+    .map((key) => ({ ...real.schemes[0], key }));
+  const v = buildDeliverableView(phaseResult({ ...real, mode: 'presets', schemes: presets }));
+  assert.equal(v.primary.key, 'VALUE');
+  assert.equal(v.schemes.length, 6, '整套菜单仍在视图模型里（卡只画主推那一套）');
+});
+
+test('mode=presets 是"这是菜单"的判据；custom 与缺失都不是', () => {
+  assert.equal(buildDeliverableView(phaseResult(real)).presets, false);
+  assert.equal(buildDeliverableView(phaseResult({ ...real, mode: 'custom' })).presets, false);
+  assert.equal(buildDeliverableView(phaseResult({ ...real, mode: 'presets' })).presets, true);
+  const { mode: _dropped, ...withoutMode } = real;
+  assert.equal(buildDeliverableView(phaseResult(withoutMode)).presets, false, '老后端没有 mode 键时按老行为');
+});
+
 test('池诊断读出候选/可用/剔除，并带上"已达上限"', () => {
   const v = buildDeliverableView(phaseResult(real));
   assert.deepEqual(v.pool, { candidateCount: 861, usableCount: 561, skippedByFilter: 299,
