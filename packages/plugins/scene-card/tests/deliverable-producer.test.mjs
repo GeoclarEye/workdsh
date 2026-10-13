@@ -1,0 +1,177 @@
+/**
+ * 生产者：事件进 → 文件出。用假 ctx + 真临时目录，测的是"真的落了盘、内容对"。
+ * 跑法：node --test packages/plugins/scene-card/tests/deliverable-producer.test.mjs
+ */
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve as resolvePath } from 'node:path';
+import { registerDeliverableProducer } from '../dist/runtime/deliverable-producer.js';
+import { callIdOfResult } from '../dist/runtime/tool-call-pairing.js';
+
+/**
+ * `ctx.fs` 的薄壳，落到真 node:fs —— 与 `deliverable-store.test.mjs` 同一份（那处已逐条钉过）。
+ *
+ * 这里**必须**是完整的一份，不能只给 `resolve` + `writeText`：生产者落盘走的是 `writeDeliverable`
+ * （它要 `processPath` 才拿得到执行世界的绝对路径），去重走的是 `resolveCallId`（它要 `listDir` +
+ * `readText` 才扫得出 manifest）。缺哪个，生产者那条 `.catch` 都会把缺口的 TypeError 咽成一条日志 ——
+ * 测试只会看见"没落盘"，看不出为什么。而且 `resolve` 必须按 `path.resolve` 语义拼，
+ * 不能原样返回入参：`writeDeliverable` 交给 `mkdir`/`writeFile` 的是 `processPath` 的结果，
+ * 相对路径会被解析成**进程的 cwd**，于是文件落到测试目录之外去。
+ *
+ * 每个方法顺手记两笔：在飞的操作数，以及**写 manifest 的次数**（T2 定的完成标记 —— 一份交付物
+ * 的最后一步就是写它）。生产者是 fire-and-forget（不把 promise 交出来），测试要等它跑完，
+ * 只能盯这条通道 —— 见 `settle`。
+ */
+const ops = { started: 0, inFlight: 0, manifests: 0 };
+const track = (body) => async (...args) => {
+  ops.started += 1;
+  ops.inFlight += 1;
+  try { return await body(...args); } finally { ops.inFlight -= 1; }
+};
+const fs = {
+  resolve: track(async (path, opts) => ({ absolute: resolvePath(opts?.cwd ?? process.cwd(), path) })),
+  processPath: (target) => target.absolute,
+  writeText: track(async (target, content) => {
+    if (target.absolute.endsWith('manifest.json')) ops.manifests += 1;
+    await writeFile(target.absolute, content, 'utf8');
+  }),
+  readText: track(async (target) => await readFile(target.absolute, 'utf8')),
+  listDir: track(async (target) => (await readdir(target.absolute, { withFileTypes: true }))
+    .map((entry) => ({
+      name: entry.name,
+      type: entry.isDirectory() ? 'directory' : entry.isFile() ? 'file' : 'other',
+      target: { absolute: join(target.absolute, entry.name) },
+    }))
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))),
+};
+
+const payload = { mode: 'custom', poolAtLimit: false,
+  schemes: [{ key: 'CUSTOM', sceneCount: 235 }] };
+
+const events = (callId, args) => [
+  { type: 'user/message', data: { message: { content: [{ type: 'text', text: '霍尔木兹海峡' }] } } },
+  { type: 'tool/call', data: { callId, name: 'mcp__geoclar__geoclar_recommend_schemes',
+    arguments: JSON.stringify(args) } },
+  { type: 'tool/result', data: { message: { source: { kind: 'tool', callId },
+    content: [{ type: 'text', text: JSON.stringify(payload) }] } } },
+];
+
+/** 装一个假 ctx，把 on 收到的 handler 抓住，返回一个"喂事件"的函数。 */
+function harness(cwd, warnings = []) {
+  let handler;
+  registerDeliverableProducer({
+    fs,
+    on: (name, fn) => { assert.equal(name, 'session/event'); handler = fn; },
+    logger: () => ({ warn: (message) => { warnings.push(message); } }),
+  });
+  const session = { id: 'sess-1', header: { cwd } };
+  return {
+    feed: (event) => handler(session, event),
+    /**
+     * 等生产者那笔挂起来的落盘跑完。它不给 promise（fire-and-forget 正是被测的行为），
+     * 所以只能盯这条 fs 通道：**看见新的 manifest 提交标记、且通道静下来**就算跑完；
+     * manifest 是落一份交付物的最后一步，它写完就再没有后续操作，这条判据是准的。
+     *
+     * 为什么不用"睡定长"：落盘是"微任务 + 几步真 IO"（`mkdir` 内部走 `node:fs`，看不见），
+     * 定时器阶段又先于 IO 完成回调所在的 poll 阶段。实测（同一台机器）：睡一拍 100 次里只有
+     * 76 次看得见文件；睡三拍单跑够、**混在整套测试里仍会偶发变红**（整套是并行跑的）。所以盯条件。
+     *
+     * 这一趟本来就不该落盘的（无 cwd、形状不认识、重放）没有提交标记可等 —— 那时用"静默够久"
+     * 兜底（连 5 拍没有在飞/新起的操作，且至少过了 10ms）。上限 2s：真出岔子时别挂死，让断言去报。
+     */
+    settle: async () => {
+      const commit = ops.manifests;
+      const deadline = Date.now() + 2000;
+      const floor = Date.now() + 10;
+      let quiet = 0;
+      while (Date.now() < deadline) {
+        const started = ops.started;
+        await new Promise((resolve) => { setImmediate(resolve); });
+        const idle = ops.inFlight === 0 && ops.started === started;
+        if (idle && ops.manifests > commit) break;          // 这一趟落了，且写完了
+        quiet = idle && Date.now() >= floor ? quiet + 1 : 0;
+        if (quiet >= 5) break;                              // 这一趟不该落：静默够久就算它没打算落
+      }
+    },
+  };
+}
+
+async function withDir(body) {
+  const cwd = await mkdtemp(join(tmpdir(), 'wd-producer-'));
+  try { await body(cwd); } finally { await rm(cwd, { recursive: true, force: true }); }
+}
+
+test('一串事件 ⇒ 恰好落一份，目录名与 manifest 符合约定', async () => {
+  await withDir(async (cwd) => {
+    const h = harness(cwd);
+    for (const event of events('call_1', { wkt: 'POLYGON EMPTY', maxCloud: 20 })) h.feed(event);
+    await h.settle();
+    const names = await readdir(join(cwd, '交付物'));
+    assert.equal(names.length, 1);
+    const manifest = JSON.parse(await readFile(join(cwd, '交付物', names[0], 'manifest.json'), 'utf8'));
+    assert.equal(manifest.callId, 'call_1');
+    assert.equal(manifest.subject, '霍尔木兹海峡');
+    const version = JSON.parse(await readFile(join(cwd, '交付物', names[0], 'v1.json'), 'utf8'));
+    assert.deepEqual(version.payload, payload);
+    assert.deepEqual(version.intent.conditions, { maxCloud: 20 });
+  });
+});
+
+test('同一个 callId 再来一次 result ⇒ 不落第二份', async () => {
+  await withDir(async (cwd) => {
+    const h = harness(cwd);
+    const list = events('call_1', { wkt: 'W' });
+    for (const event of list) h.feed(event);
+    await h.settle();
+    const [first] = await readdir(join(cwd, '交付物'));
+    const before = await readFile(join(cwd, '交付物', first, 'manifest.json'), 'utf8');
+    for (const event of list) h.feed(event);     // 重放
+    await h.settle();
+    assert.equal((await readdir(join(cwd, '交付物'))).length, 1);
+    // 只数目录数**不够**：重放与首写落在同一秒里，slug 相同 ⇒ 抽掉 `resolveCallId` 那道去重闸，
+    // 第二次也只会**覆盖同一份**，目录数照样是 1（实测：抽掉闸门，上面那条断言仍是绿的）。
+    // manifest 的 `at` 是毫秒级的，而两次写入之间隔着一次 `settle`（≥10ms，见上）——
+    // 真被改写过就必然是另一串字节，这条才钉得住"不落第二份"。
+    assert.equal(await readFile(join(cwd, '交付物', first, 'manifest.json'), 'utf8'), before);
+  });
+});
+
+test('会话没有 cwd ⇒ 不落盘，且记一条日志（spec §7）', async () => {
+  await withDir(async (cwd) => {
+    const warnings = [];
+    let handler;
+    registerDeliverableProducer({ fs,
+      on: (_name, fn) => { handler = fn; },
+      logger: () => ({ warn: (message) => { warnings.push(message); } }) });
+    const session = { id: 's2', header: {} };
+    for (const event of events('call_1', { wkt: 'W' })) handler(session, event);
+    await new Promise((resolve) => { setTimeout(resolve, 0); });
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /没有 cwd/);
+    assert.deepEqual(await readdir(join(cwd, '交付物')).catch(() => []), []);
+  });
+});
+
+test('形状不认识 ⇒ 不落盘、不打日志噪音', async () => {
+  await withDir(async (cwd) => {
+    const warnings = [];
+    const h = harness(cwd, warnings);
+    h.feed({ type: 'tool/call', data: { callId: 'c', name: 't', arguments: '{"wkt":"W"}' } });
+    h.feed({ type: 'tool/result', data: { message: { source: { callId: 'c' },
+      content: [{ type: 'text', text: JSON.stringify({ mode: '别的' }) }] } } });
+    await h.settle();
+    assert.deepEqual(await readdir(join(cwd, '交付物')).catch(() => []), []);
+    assert.equal(warnings.length, 0);
+  });
+});
+
+/**
+ * 配对 id 的读法：本模块是 `callIdOfResult` 的**第一个直接调用方**（Task 3 的评审把这条记为待补：
+ * 那边的用例 6/7 只经 `note`/`take` 间接到达它）。形状读不懂的两种退化输入各钉一条。
+ */
+test('callIdOfResult：退化输入给 undefined，不硬凑一个 id', () => {
+  assert.equal(callIdOfResult({}), undefined);
+  assert.equal(callIdOfResult({ message: { source: { callId: '' } } }), undefined);
+});
