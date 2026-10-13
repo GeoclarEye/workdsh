@@ -109,6 +109,30 @@ async function withDir(body) {
   try { await body(cwd); } finally { await rm(cwd, { recursive: true, force: true }); }
 }
 
+/**
+ * 把盘上每一份都读出来（目录名 + manifest + 正文），供"两份都在、各是各的"这类断言用。
+ */
+async function readAll(cwd) {
+  const items = [];
+  for (const name of (await readdir(join(cwd, '交付物'))).sort()) {
+    items.push({
+      name,
+      manifest: JSON.parse(await readFile(join(cwd, '交付物', name, 'manifest.json'), 'utf8')),
+      version: JSON.parse(await readFile(join(cwd, '交付物', name, 'v1.json'), 'utf8')),
+    });
+  }
+  return items;
+}
+
+/**
+ * 等到**刚跨过秒边界**再往下走：slug 的时间戳只到秒（`slugOf`），"同一秒里撞名"这件事得自己造，
+ * 而刚跨过边界时这一秒还剩 ~950ms，两次落盘只要毫秒级。
+ * （不冻时钟：`settle` 的上下界用的就是 `Date.now()`，冻住它真出岔子时会等不到上限。）
+ */
+async function freshSecond() {
+  await new Promise((resolve) => { setTimeout(resolve, 1000 - (Date.now() % 1000) + 5); });
+}
+
 test('一串事件 ⇒ 恰好落一份，目录名与 manifest 符合约定', async () => {
   await withDir(async (cwd) => {
     const h = harness(cwd);
@@ -219,36 +243,55 @@ test('连接器改过名（线名里不是 geoclar）⇒ 照样认得出来', as
  * 同一秒、同一 subject 的两次**不同**调用：slug 的时间戳只到秒（`slugOf`），两份会算出同一个 slug。
  * 不挪开就会覆盖 —— spec §4 要的是"每次产出落一份新的**子目录**，不归并"，覆盖等于丢一份。
  *
- * 秒要自己造：等到刚跨过秒边界再喂，这一秒还剩 ~950ms，两次落盘只要毫秒级。
- * （不用 `mock.timers` 冻时钟：`settle` 的上下界用的就是 `Date.now()`，冻住它会让真出岔子时等不到上限。）
+ * 这两条（顺序落盘 / 同一拍并发落盘）各测一遍：顺序的那条由 `freeSlug` 兜住；同一拍的那条
+ * 得靠落盘串行化（`writeChain`）—— 并发时双方的列举都跑在对方写入之前，`freeSlug` 看不见对方。
  */
-test('同一秒、同一 subject、两个 callId ⇒ 各落一份，谁也盖不掉谁', async () => {
+test('同一秒、同一 subject、两个 callId（依次落盘）⇒ 各落一份，谁也盖不掉谁', async () => {
   await withDir(async (cwd) => {
-    await new Promise((resolve) => { setTimeout(resolve, 1000 - (Date.now() % 1000) + 5); });
+    await freshSecond();
     const h = harness(cwd);
     for (const e of events('call_A', { wkt: 'W', maxCloud: 10 })) h.feed(e);
     await h.settle();
     for (const e of events('call_B', { wkt: 'W', maxCloud: 80 })) h.feed(e);
     await h.settle();
-    const names = (await readdir(join(cwd, '交付物'))).sort();
-    assert.equal(names.length, 2);
-    const read = async (name) => ({
-      manifest: JSON.parse(await readFile(join(cwd, '交付物', name, 'manifest.json'), 'utf8')),
-      version: JSON.parse(await readFile(join(cwd, '交付物', name, 'v1.json'), 'utf8')),
-    });
-    const [a, b] = [await read(names[0]), await read(names[1])];
+    const landed = await readAll(cwd);
+    assert.equal(landed.length, 2);
     // 前提自检：两次确实落在同一秒里（不然本用例要测的撞名根本不成立）
     const secondOf = (iso) => iso.slice(0, 19);
-    assert.equal(secondOf(a.manifest.versions[0].at), secondOf(b.manifest.versions[0].at), '两次没落在同一秒，用例不成立');
+    assert.equal(secondOf(landed[0].manifest.versions[0].at), secondOf(landed[1].manifest.versions[0].at),
+      '两次没落在同一秒，用例不成立');
     // 第二份被挪到 `-2`，两份各自带着自己的 callId 与自己的入参（这份没被那份覆盖）
-    assert.equal(names[1], `${names[0]}-2`);
-    assert.deepEqual([a.manifest.callId, b.manifest.callId].sort(), ['call_A', 'call_B']);
-    assert.deepEqual([a.version.intent.conditions.maxCloud, b.version.intent.conditions.maxCloud].sort(), [10, 80]);
+    assert.equal(landed[1].name, `${landed[0].name}-2`);
+    assert.deepEqual(landed.map((item) => item.manifest.callId).sort(), ['call_A', 'call_B']);
+    assert.deepEqual(landed.map((item) => item.version.intent.conditions.maxCloud).sort((x, y) => x - y), [10, 80]);
     // 两份都要被**列举**看得见：manifest 记的 slug 与目录名不符的话（位置闸），
     // 只改 `documents.slug` 不改 `manifest.slug` 就会落到这个坑里 —— 比撞名还糟。
     const listed = await listDeliverables(fs, cwd);
     assert.deepEqual(listed.map((entry) => entry.callId).sort(), ['call_A', 'call_B']);
-    assert.deepEqual(listed.map((entry) => entry.slug).sort(), names);
+    assert.deepEqual(listed.map((entry) => entry.slug).sort(), landed.map((item) => item.name).sort());
+  });
+});
+
+/**
+ * 同一拍（不等前一份落完）把两次调用的结果都喂进去 —— 两条落盘链会**交错**：
+ * 双方的列举都跑在对方写入之前，于是双双选中同一个 slug。只有在**落盘串行化**之下
+ * （`writeChain`）这条才过得了：修之前实测只落下 call_A 一份，call_B 把它盖掉了。
+ */
+test('同一拍进来的两份（同秒同 subject）⇒ 一份都不少', async () => {
+  await withDir(async (cwd) => {
+    await freshSecond();
+    const h = harness(cwd);
+    for (const e of events('call_A', { wkt: 'W', maxCloud: 10 })) h.feed(e);
+    for (const e of events('call_B', { wkt: 'W', maxCloud: 80 })) h.feed(e);   // 不 settle，直接接着喂
+    await h.settle(2);
+    const landed = await readAll(cwd);
+    assert.equal(landed.length, 2);
+    const secondOf = (iso) => iso.slice(0, 19);
+    assert.equal(secondOf(landed[0].manifest.versions[0].at), secondOf(landed[1].manifest.versions[0].at),
+      '两次没落在同一秒，用例不成立');
+    assert.equal(landed[1].name, `${landed[0].name}-2`);
+    assert.deepEqual(landed.map((item) => item.manifest.callId).sort(), ['call_A', 'call_B']);
+    assert.deepEqual(landed.map((item) => item.version.intent.conditions.maxCloud).sort((x, y) => x - y), [10, 80]);
   });
 });
 

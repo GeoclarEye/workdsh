@@ -4,6 +4,7 @@
  * 两条与先例一致的做法（`projects/src/runtime/deliverable-attribution.ts`）：
  *   · 订阅挂在**根 context**上，监听**全部**会话（agent-scoped 只听自己进入的会话，spec §4）；
  *   · 监听器**立刻返回**，落盘在微任务里跑 —— 一次慢写不该拖住别人的会话提交。
+ *     落盘之间还串成一条链（`writeChain`）：并发落盘会双双选中同一个 slug 而互相覆盖。
  *
  * 每个会话一个配对器（callId 只在会话内唯一），随会话第一次出现时创建。
  */
@@ -48,6 +49,19 @@ function freeSlug(base: string, taken: ReadonlySet<string>): string {
   }
 }
 
+/**
+ * 落盘**串行化**：同一拍里到达的两份交付物，各自"先列举、再写"的链会交错 —— 双方的列举都跑在
+ * 对方写入之前，于是双双选中同一个 slug，后写的把先写的**覆盖**掉（又是一份无声丢失，
+ * 而 `freeSlug` 挡不住它：那是"撞上已存在的"，这是"同时选同一个"）。
+ *
+ * 串成一条链就没有交错：对盘上"列举 + 写"这件事，链上的每一段是原子的。
+ * 链跨会话共用：撞名判据是**目录**，同一个工作区被两个会话共用时也得串。
+ *
+ * 链尾挂着 `.catch`（见调用处）：一次失败不能把后面每一份都毒死，所以 `writeChain` 永远是一条
+ * **已解决**的链，失败的记账仍走"落盘失败只记日志"那一条路。
+ */
+let writeChain: Promise<void> = Promise.resolve();
+
 export function registerDeliverableProducer(ctx: ProducerContext): void {
   const logger = ctx.logger('workdsh-scene-card');
   /** 会话 id → 配对器。会话数量有界（一次进程的活跃会话），不必淘汰。 */
@@ -77,8 +91,8 @@ export function registerDeliverableProducer(ctx: ProducerContext): void {
     const subject = pairing.latestUserMessage();
     const at = new Date();
 
-    // 立刻返回，落盘在微任务里跑 —— 慢写不拖住会话提交。
-    void Promise.resolve().then(async () => {
+    // 立刻返回，落盘挂在串行链上跑（`then` 本身就是微任务，慢写不拖住会话提交）。
+    writeChain = writeChain.then(async () => {
       const cwd = session.header?.cwd;
       if (cwd === undefined || cwd === '') {
         // spec §7：会话没有 cwd（持久化层把这类会话落进 _no-cwd）⇒ 记一条日志，不抛。
@@ -102,7 +116,8 @@ export function registerDeliverableProducer(ctx: ProducerContext): void {
       await writeDeliverable(ctx.fs, cwd, slug === documents.slug ? documents
         : { slug, manifest: { ...documents.manifest, slug }, version: documents.version });
     }).catch((cause: unknown) => {
-      // 落盘失败不该冒到会话事件流上：流是 fire-and-forget，别人还在提交。
+      // 落盘失败不该冒到会话事件流上（流是 fire-and-forget，别人还在提交），也不能把链断掉 ——
+      // 这个 `.catch` 让 `writeChain` 始终是**已解决**的链，后面每一份照落。
       logger.warn(`交付物落盘失败：${cause instanceof Error ? cause.message : String(cause)}`);
     });
   });
