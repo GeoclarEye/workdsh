@@ -1,6 +1,6 @@
 {
   "name": "workdsh-plugin-scene-card",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0-alpha.2",
   "private": false,
   "type": "module",
   "description": "Presents agent-produced scene schemes as an in-conversation card and a right-side deliverable panel.",
