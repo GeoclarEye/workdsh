@@ -200,9 +200,15 @@ function installProfileIfNeeded({ releaseDirectory, dshHome, profile }) {
       : '[front] 首次启动：正在把 WorkDSH Profile 安装到 DSH_HOME（需要访问 npm registry）',
   )
   return new Promise((resolveInstall, rejectInstall) => {
+    // `WORKDSH_PACKAGES_ONLY=1` 让安装器只换本次 release 的产品包、跳过一切联网装
+    // 官方运行时。给部署机出网受限的场景（实测到 registry.npmjs.org 仅 2 B/s，
+    // 重装官方 dsh 运行时会白等很久），此时卷里的 Profile 已装好同 harness 的运行时。
+    const packagesOnly = process.env.WORKDSH_PACKAGES_ONLY === '1';
+    if (packagesOnly) console.log('[front] WORKDSH_PACKAGES_ONLY=1：只装产品包，跳过运行时重装');
     const installer = spawn(
       process.execPath,
-      [join(releaseDirectory, 'install-workdsh.mjs'), '--profile', profile],
+      [join(releaseDirectory, 'install-workdsh.mjs'), '--profile', profile,
+        ...(packagesOnly ? ['--packages-only'] : [])],
       { stdio: 'inherit' },
     )
     installer.once('error', rejectInstall)

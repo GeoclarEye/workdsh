@@ -18,6 +18,12 @@ const directory = resolve(value('--directory', dirname(fileURLToPath(import.meta
 const dsh = value('--dsh', 'dsh');
 const dryRun = has('--dry-run');
 const corepack = value('--corepack', 'corepack');
+// 只装本次 release 的产品包，**跳过一切联网装官方运行时**。
+// 给的场景：部署机到 npm registry 慢到不可用（实测 2 B/s），而卷里 Profile 已装好
+// 同 harness 的官方 dsh 运行时 —— 那种情况下重装运行时纯属白等。
+// 官方基座（dsh-base / dsh-web-app）与 dsh 运行时都**不碰**；上面第 82-88 行的
+// harness 版本校验仍然照做，所以"运行时对不上"照样会在这里被拦下，而不是拖到启动时才炸。
+const offlinePackagesOnly = has('--packages-only');
 const manifestPath = join(directory, 'release-manifest.json');
 
 if (!existsSync(manifestPath)) {
@@ -141,7 +147,11 @@ if (!dryRun && existsSync(workspaceFile)) {
   writeFileSync(workspaceFile, current);
 }
 
+if (!offlinePackagesOnly) {
 execute(['plugin', '--profile', profile, 'add', `@deepseek-ai/dsh-base@${expectedHarness}`, `@deepseek-ai/dsh-web-app@${expectedHarness}`]);
+} else {
+  console.log('> --packages-only：跳过联网安装官方基座，沿用 Profile 已有的运行时');
+}
 
 for (const name of installOrder) {
   const item = packages.get(name);
@@ -159,16 +169,18 @@ for (const name of installOrder) {
 
 // Keep CLI and ConfigEditor in the same Profile dependency graph (0.1.7).
 const runtimeArgs = ['pnpm', '--dir', join(dshHome, 'profiles', profile), 'add', '--save-exact', `@deepseek-ai/dsh@${expectedHarness}`, `@deepseek-ai/dsh-deepseek-account@${expectedHarness}`, '@deepseek-ai/cordis-plugin-group@1.0.4'];
+if (!offlinePackagesOnly) {
 console.log(`> ${corepack} ${runtimeArgs.join(' ')}`);
 if (!dryRun) {
   const result = spawnSync(corepack, runtimeArgs, { stdio: 'inherit' });
   if (result.error) throw result.error;
   if (result.status !== 0) process.exit(result.status ?? 1);
 }
+}
 // Profiles disable automatic peers, because WorkDSH's build-only workspace peers
 // are bundled and not published to npm. Install the official runtime peer closure
 // explicitly so a clean Profile can boot without relying on the developer repo.
-if (!dryRun) {
+if (!dryRun && !offlinePackagesOnly) {
   const scope = join(dshHome, 'profiles', profile, 'node_modules', '@deepseek-ai');
   for (let pass = 0; existsSync(scope); pass++) {
     const missing = new Map();
