@@ -74,7 +74,11 @@ function stamp(at: Date): string {
 
 /**
  * 目录名：时间戳 + 短标题。保留中日韩与字母数字，其余压成**单个**连字符（连续分隔符只出一个），
- * 整体截断到 64 字符。没有可用标题时**只有时间戳** —— 不编一句话。
+ * 整体截断到 64 个码点。没有可用标题时**只有时间戳** —— 不编一句话。
+ *
+ * 截断按**码点**数，不是 UTF-16 码元：扩展 B 区及以上的汉字是代理对，按码元切会把一个字
+ * 劈成两半、留下落单的代理项 —— `manifest.slug` 记着它，落盘时却被编码成 U+FFFD，于是
+ * "身份 = slug + 路径"两边对不上（T2 的存储层正是先按 slug 建目录、再报 manifest 里的 slug）。
  */
 export function slugOf(subject: string, at: Date): string {
   const prefix = stamp(at);
@@ -82,7 +86,8 @@ export function slugOf(subject: string, at: Date): string {
     .replace(/[^\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}A-Za-z0-9]+/gu, '-')
     .replace(/^-+|-+$/g, '');
   if (body === '') return prefix;
-  return `${prefix}-${body.slice(0, 64 - prefix.length - 1)}`;
+  const room = 64 - prefix.length - 1;
+  return `${prefix}-${Array.from(body).slice(0, room).join('')}`;
 }
 
 /** 出参形状闸：这一层只认它要显示的那些读数，读不懂就整份放弃。 */

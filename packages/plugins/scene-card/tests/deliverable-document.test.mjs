@@ -107,3 +107,14 @@ test('slugOf：保留中日韩与字母数字，其余压成单个连字符，�
   assert.equal(slugOf('', at), '20261013-045800');
   assert.ok(slugOf('啊'.repeat(200), at).length <= 64);
 });
+
+test('截断按码点，不切出落单的代理（否则 manifest.slug 与磁盘目录名会不一致）', () => {
+  const slug = slugOf('𠀀'.repeat(80), at);     // U+20000：每个占两个 UTF-16 单元
+  assert.equal(Array.from(slug).length, 64);   // 按码点截，正好到上限
+  // 混排（BMP 汉字垫到第 48 个码元正好落在代理对中间）——按码元切会留下落单的代理项，
+  // 落盘时被编码成 U+FFFD，而 manifest.slug 仍记着它。
+  const loneSurrogate = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+  const mixed = slugOf('啊'.repeat(47) + '𠮷'.repeat(10), at);
+  assert.equal(loneSurrogate.test(mixed), false);
+  assert.equal(Array.from(mixed).length, 64);
+});
