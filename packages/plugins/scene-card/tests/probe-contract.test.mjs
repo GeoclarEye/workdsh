@@ -21,7 +21,8 @@
  *   node --test packages/plugins/scene-card/tests/probe-contract.test.mjs
  *
  * 依赖：本仓 Web 工作区的官方包（`apps/web/node_modules/.pnpm/@deepseek-ai+dsh-client-ui-*`）。
- * 该目录不存在时整组跳过，并打印原因 —— 探针不假装在缺料时"通过"。
+ * 该目录不存在时**整组失败**并点名缺哪个包 —— 本探针已被 CI 白名单收录（见
+ * `.github/workflows/ci.yml` 的 Scene deliverable 那一步），会跳过的门等于没有门。
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -59,9 +60,18 @@ const missing = [
   ['dsh-client-ui-sidebar-right (lib)', sidebarRightLib],
 ].filter(([, dir]) => dir === undefined || !existsSync(dir)).map(([name]) => name);
 
-const SKIP = missing.length === 0
-  ? false
-  : `官方包未安装：${missing.join(', ')}；先在 apps/web 下安装 Web 依赖再跑本探针`;
+/**
+ * 缺依赖即失败，不再 `{ skip: SKIP }`。本探针在 Task 6 被接进 CI 白名单，成了回归门：
+ * 静默跳过的门等于没有门，所以"缺料"必须表现为**失败**，并在消息里说清缺什么。
+ */
+function requireOfficialPackages() {
+  if (missing.length > 0) {
+    assert.fail(
+      `缺 Web 依赖：${missing.join(', ')}；本探针是 CI 门，缺依赖即失败 —— `
+      + '先在 apps/web 下 `pnpm install` 再跑。',
+    );
+  }
+}
 
 function read(file) {
   return readFileSync(file, 'utf8');
@@ -98,7 +108,8 @@ function interfaceBody(src, name) {
   return bracedBody(src, new RegExp(`(?:^|\\n)\\s*(?:export\\s+)?interface\\s+${name}\\s*\\{`));
 }
 
-test('§9-5 耗时：tool-call 与 tool-result 节点都带可读 epoch 毫秒时间戳', { skip: SKIP }, () => {
+test('§9-5 耗时：tool-call 与 tool-result 节点都带可读 epoch 毫秒时间戳', () => {
+  requireOfficialPackages();
   const records = read(join(conversationTypes, 'client', 'contract', 'records.d.ts'));
 
   const resultBody = interfaceBody(records, 'ToolResultNode');
@@ -149,7 +160,8 @@ test('§9-5 耗时：tool-call 与 tool-result 节点都带可读 epoch 毫秒�
   assert.match(nodeStore, /turnDataSource<[\s\S]*?ObservableSnapshot<readonly\s+ChatNodeDataMap\[Kind\]\[\]>/);
 });
 
-test('§9-6 用户关掉：唯一信号是清理钩子，拿不到"用户拒绝"语义', { skip: SKIP }, () => {
+test('§9-6 用户关掉：唯一信号是清理钩子，拿不到"用户拒绝"语义', () => {
+  requireOfficialPackages();
   const service = read(join(sidebarRightTypes, 'client', 'service.d.ts'));
   const client = read(join(sidebarRightLib, 'client.js'));
 
@@ -190,7 +202,8 @@ test('§9-6 用户关掉：唯一信号是清理钩子，拿不到"用户拒绝"
   assert.match(slots, /interface SidebarRightTabMenuOwnerProps[\s\S]*?dismiss: \(\) => void/);
 });
 
-test('§9-7 窄屏：<768px 自动全屏覆盖（不隐藏、不占位）', { skip: SKIP }, () => {
+test('§9-7 窄屏：<768px 自动全屏覆盖（不隐藏、不占位）', () => {
+  requireOfficialPackages();
   const client = read(join(sidebarRightLib, 'client.js'));
 
   assert.match(client, /const autoFullscreen = viewportWidth < 768;/, '阈值常量 768px 应存在');
@@ -209,7 +222,8 @@ test('§9-7 窄屏：<768px 自动全屏覆盖（不隐藏、不占位）', { sk
   assert.doesNotMatch(iface, /autoFullscreen/, 'ISidebarRight 未暴露窄屏判定');
 });
 
-test('§9-8 重复 openTabIn：重绑同一 tab，不新开第二个也不被拒', { skip: SKIP }, () => {
+test('§9-8 重复 openTabIn：重绑同一 tab，不新开第二个也不被拒', () => {
+  requireOfficialPackages();
   const client = read(join(sidebarRightLib, 'client.js'));
 
   // kind 未声明 multiple 时，地址是稳定的 pageAddress(kind) ⇒ contentId 相同 ⇒ 同一 tab。

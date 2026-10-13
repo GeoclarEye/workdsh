@@ -54,7 +54,8 @@
     "probe:subagent:activation-limit": "node scripts/probe-subagent-activation-limit.mjs",
     "test:library": "corepack pnpm --filter workdsh-plugin-library test",
     "probe:library": "node scripts/probe-library-release.mjs",
-    "test:projects": "corepack pnpm --filter workdsh-plugin-projects test"
+    "test:projects": "corepack pnpm --filter workdsh-plugin-projects test",
+    "test:scene-card": "corepack pnpm --filter workdsh-plugin-scene-card test"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.4",
