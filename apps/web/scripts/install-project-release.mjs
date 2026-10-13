@@ -40,6 +40,7 @@ const defaultInstallOrder = [
   'workdsh-plugin-experts',
   'workdsh-plugin-connectors',
   'workdsh-plugin-library',
+  'workdsh-plugin-scene-card',
   'workdsh-bundle',
 ];
 

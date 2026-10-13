@@ -21,6 +21,10 @@ export function projectActivity(entries: readonly Entry[], running: boolean): Ac
     if (event.type === 'tool/result') {
       const message = record(data.message), source = record(message.source);
       const result = typeof message.toolCallId === 'string' ? message : Array.isArray(message.content) ? message.content.map(record).find(block => block.type === 'tool-result') : undefined;
+      // 同一个配对 id 的另一处读法（先 `source.callId`）见 packages/plugins/scene-card/src/runtime/
+      // tool-call-pairing.ts 的 `callIdOfResult`：交付物那条链以它读出的 id 为准（manifest 记它）。
+      // 两个字段在官方的 `ToolResultMessage` 上都必填、正常同值，分歧只在残缺事件里；那边是另一
+      // 个用途，这里保持既有的兜底顺序不动。
       const callId = String(message.toolCallId ?? source.callId);
       if (skills.has(callId) && result && !result.isError) skill = skills.get(callId);
       if (calls.get(callId) === 'ask_user_question') phase = 'working';

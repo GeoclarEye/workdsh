@@ -150,6 +150,11 @@ jobs:
       - name: Connector authorization and tool-call timeout tests
         working-directory: apps/web
         run: node --test ../../packages/plugins/connectors/tests/*.test.mjs
+      # 两条渲染测试要真 chromium，所以这一步必须留在上面那次
+      # `playwright install --with-deps chromium` 之后；esbuild 同样取自 apps/web。
+      - name: Scene deliverable card and panel tests
+        working-directory: apps/web
+        run: node --test ../../packages/plugins/scene-card/tests/*.test.mjs
       - name: Enterprise desktop identity and collaboration tests
         working-directory: apps/web
         run: node --test ../../packages/providers/identity-enterprise/tests/*.test.mjs ../../packages/plugins/enterprise-collaboration/tests/*.test.mjs

@@ -21,6 +21,7 @@ const packageDirectories = [
   '../../packages/plugins/library',
   '../../packages/plugins/projects',
   '../../packages/plugins/activity',
+  '../../packages/plugins/scene-card',
   '../../packages/bundle',
 ];
 
@@ -75,7 +76,7 @@ await writeFile(join(destination, 'release-manifest.json'), JSON.stringify({
   runtimeOverrides: Object.fromEntries(Object.entries(project.pnpm.overrides).filter(([name]) => name.startsWith('@deepseek-ai/'))),
   packages,
   installation: {
-    defaultPackages: ['workdsh-provider-identity-local','workdsh-provider-browser-session','workdsh-plugin-audit','workdsh-plugin-access','workdsh-plugin-skills','workdsh-plugin-experts','workdsh-plugin-connectors','workdsh-plugin-library','workdsh-bundle'],
+    defaultPackages: ['workdsh-provider-identity-local','workdsh-provider-browser-session','workdsh-plugin-audit','workdsh-plugin-access','workdsh-plugin-skills','workdsh-plugin-experts','workdsh-plugin-connectors','workdsh-plugin-library','workdsh-plugin-scene-card','workdsh-bundle'],
     optionalPackages: ['workdsh-plugin-office','workdsh-plugin-projects','workdsh-plugin-activity'],
     enterprisePackages: 'Separate artifacts; not included in this personal collection',
     preservesPreviouslyInstalledOptionalPackages: true,

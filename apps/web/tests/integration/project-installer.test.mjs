@@ -12,7 +12,7 @@ const harnessVersion = '0.2.0-rc.2';
 const packageNames = [
   'workdsh-provider-identity-local', 'workdsh-provider-browser-session', 'workdsh-plugin-audit', 'workdsh-plugin-access',
   'workdsh-plugin-skills', 'workdsh-plugin-experts', 'workdsh-plugin-connectors',
-  'workdsh-plugin-activity', 'workdsh-plugin-office', 'workdsh-plugin-library', 'workdsh-plugin-projects', 'workdsh-bundle',
+  'workdsh-plugin-activity', 'workdsh-plugin-office', 'workdsh-plugin-library', 'workdsh-plugin-scene-card', 'workdsh-plugin-projects', 'workdsh-bundle',
 ];
 
 async function fixture(version = harnessVersion) {
@@ -45,7 +45,7 @@ if (args[0] === 'pnpm') {
 }
 const profile = args[args.indexOf('--profile') + 1];
 if (args.includes('--from-default-profile')) {
-  const dir = join(process.env.DSH_HOME, '../../profiles', profile);
+  const dir = join(process.env.DSH_HOME, 'profiles', profile);
   if (existsSync(join(dir, 'package.json'))) process.exit(9);
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, 'package.json'), '{}');
@@ -73,7 +73,7 @@ test('project installer initializes a new profile exactly once', async () => {
     const recorded = await calls(input);
     assert.deepEqual(recorded[0], ['--version']);
     assert.deepEqual(recorded[1], ['--profile', 'fresh', '--from-default-profile', 'web', '--dump-config']);
-    assert.equal(recorded.filter(args => args[0] === 'plugin').length, 10);
+    assert.equal(recorded.filter(args => args[0] === 'plugin').length, 11);
     const added = recorded.flatMap(args => args[0] === 'plugin' ? args : []);
     for (const optional of ['activity', 'office', 'projects']) assert.ok(!added.some(arg => arg.includes(`workdsh-plugin-${optional}-fixture.tgz`)));
     assert.ok(recorded.some(args => args.includes(`@deepseek-ai/dsh@${harnessVersion}`) && args.includes(`@deepseek-ai/dsh-deepseek-account@${harnessVersion}`)));
@@ -83,7 +83,7 @@ test('project installer initializes a new profile exactly once', async () => {
 test('project installer upgrades an existing profile without reinitializing it', async () => {
   const input = await fixture();
   try {
-    const profileDir = join(input.dshHome, '../../profiles', 'existing');
+    const profileDir = join(input.dshHome, 'profiles', 'existing');
     await mkdir(profileDir, { recursive: true });
     await writeFile(join(profileDir, 'package.json'), '{"marker":"preserve"}');
     await writeFile(join(profileDir, 'pnpm-workspace.yaml'), 'packages: []\n');
@@ -93,7 +93,7 @@ test('project installer upgrades an existing profile without reinitializing it',
     assert.deepEqual(recorded[1], ['--profile', 'existing', '--dump-config']);
     assert.ok(recorded.every(args => !args.includes('--from-default-profile')));
     assert.match(await readFile(join(profileDir, 'package.json'), 'utf8'), /preserve/);
-    assert.equal(recorded.filter(args => args[0] === 'plugin').length, 10);
+    assert.equal(recorded.filter(args => args[0] === 'plugin').length, 11);
     const added = recorded.flatMap(args => args[0] === 'plugin' ? args : []);
     for (const optional of ['activity', 'office', 'projects']) assert.ok(!added.some(arg => arg.includes(`workdsh-plugin-${optional}-fixture.tgz`)));
     assert.ok(recorded.some(args => args.includes(`@deepseek-ai/dsh@${harnessVersion}`) && args.includes(`@deepseek-ai/dsh-deepseek-account@${harnessVersion}`)));
@@ -114,7 +114,7 @@ test('project installer rejects an incompatible Harness before changing a profil
 test('installer supplies native build decisions and preserves explicit user choices', async () => {
   const input = await fixture();
   try {
-    const dir = join(input.dshHome, '../../profiles', 'builds');
+    const dir = join(input.dshHome, 'profiles', 'builds');
     await mkdir(dir, { recursive: true });
     await writeFile(join(dir, 'package.json'), '{}');
     const workspace = join(dir, 'pnpm-workspace.yaml');
@@ -141,7 +141,7 @@ test('installer supplies native build decisions and preserves explicit user choi
 test('installer resolves required official peers without fetching bundled workspace or optional peers', async () => {
   const input = await fixture();
   try {
-    const dir = join(input.dshHome, '../../profiles', 'peers');
+    const dir = join(input.dshHome, 'profiles', 'peers');
     const consumer = join(dir, 'node_modules', '@deepseek-ai', 'test-consumer');
     await mkdir(consumer, {recursive: true});
     await writeFile(join(dir, 'package.json'), '{}');

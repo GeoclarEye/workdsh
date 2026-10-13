@@ -1,0 +1,8 @@
+# 门户地址：面板页脚的「去门户导出」跳过去的地方（spec §4.4：只跳门户、不做下载）。
+# 客户端 bundle 由 boot manifest 装载、manifest 条目**不带 config**，所以这个值由本插件的
+# Host 半区经 `/api/workdsh-scene-card` 交给浏览器（见 src/index.ts 与 src/client/portal.ts）。
+- insert:
+    - id: workdsh-scene-card
+      name: workdsh-plugin-scene-card
+      config:
+        portalOrigin: https://www.geoclar.com

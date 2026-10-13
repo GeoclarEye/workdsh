@@ -565,5 +565,19 @@
     "requirements": [
       "R12"
     ]
+  },
+  {
+    "path": "../../packages/plugins/scene-card",
+    "title": "交付物展示",
+    "status": "implemented",
+    "directories": [
+      "src",
+      "tests"
+    ],
+    "moduleVersion": "0.1",
+    "requirements": [
+      "R06",
+      "R15"
+    ]
   }
 ]
