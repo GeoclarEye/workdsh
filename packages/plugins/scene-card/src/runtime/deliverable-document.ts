@@ -49,8 +49,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-/** 线格式 `mcp__<连接器 serverName>__<工具名>` → 裸工具名；不匹配则原样返回。 */
-function bareToolName(toolName: string): string {
+/**
+ * 线格式 `mcp__<连接器 serverName>__<工具名>` → 裸工具名；不匹配则原样返回。
+ *
+ * **导出**：生产者要按裸名认"是不是那次工具返回"（`deliverable-producer.ts`）—— 连接器是可改配置的，
+ * 按线名认会随改名静默失效。剥前缀这件事只留这一份。
+ */
+export function bareToolName(toolName: string): string {
   const parts = toolName.split('__');
   return parts.length >= 3 && parts[0] === 'mcp' ? parts.slice(2).join('__') : toolName;
 }

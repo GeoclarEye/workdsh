@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve as resolvePath } from 'node:path';
 import { registerDeliverableProducer } from '../dist/runtime/deliverable-producer.js';
 import { callIdOfResult } from '../dist/runtime/tool-call-pairing.js';
+import { listDeliverables } from '../dist/runtime/deliverable-store.js';
 
 /**
  * `ctx.fs` 的薄壳，落到真 node:fs —— 与 `deliverable-store.test.mjs` 同一份（那处已逐条钉过）。
@@ -50,12 +51,15 @@ const fs = {
 const payload = { mode: 'custom', poolAtLimit: false,
   schemes: [{ key: 'CUSTOM', sceneCount: 235 }] };
 
-const events = (callId, args) => [
-  { type: 'user/message', data: { message: { content: [{ type: 'text', text: '霍尔木兹海峡' }] } } },
-  { type: 'tool/call', data: { callId, name: 'mcp__geoclar__geoclar_recommend_schemes',
+/** 连接器的线名：`mcp__<连接器 serverName>__<工具名>`。连接器是可改配置的（另有用例钉这条）。 */
+const GEOCLAR = 'mcp__geoclar__geoclar_recommend_schemes';
+
+const events = (callId, args, extra = {}) => [
+  { type: 'user/message', data: { message: { content: [{ type: 'text', text: extra.subject ?? '霍尔木兹海峡' }] } } },
+  { type: 'tool/call', data: { callId, name: extra.name ?? GEOCLAR,
     arguments: JSON.stringify(args) } },
   { type: 'tool/result', data: { message: { source: { kind: 'tool', callId },
-    content: [{ type: 'text', text: JSON.stringify(payload) }] } } },
+    content: [{ type: 'text', text: JSON.stringify(extra.value ?? payload) }] } } },
 ];
 
 /** 装一个假 ctx，把 on 收到的 handler 抓住，返回一个"喂事件"的函数。 */
@@ -70,28 +74,30 @@ function harness(cwd, warnings = []) {
   return {
     feed: (event) => handler(session, event),
     /**
-     * 等生产者那笔挂起来的落盘跑完。它不给 promise（fire-and-forget 正是被测的行为），
-     * 所以只能盯这条 fs 通道：**看见新的 manifest 提交标记、且通道静下来**就算跑完；
+     * 等生产者那几笔挂起来的落盘跑完。它不给 promise（fire-and-forget 正是被测的行为），
+     * 所以只能盯这条 fs 通道：**看见 `expect` 个新的 manifest 提交标记、且通道静下来**才算跑完；
      * manifest 是落一份交付物的最后一步，它写完就再没有后续操作，这条判据是准的。
      *
      * 为什么不用"睡定长"：落盘是"微任务 + 几步真 IO"（`mkdir` 内部走 `node:fs`，看不见），
      * 定时器阶段又先于 IO 完成回调所在的 poll 阶段。实测（同一台机器）：睡一拍 100 次里只有
      * 76 次看得见文件；睡三拍单跑够、**混在整套测试里仍会偶发变红**（整套是并行跑的）。所以盯条件。
      *
-     * 这一趟本来就不该落盘的（无 cwd、形状不认识、重放）没有提交标记可等 —— 那时用"静默够久"
-     * 兜底（连 5 拍没有在飞/新起的操作，且至少过了 10ms）。上限 2s：真出岔子时别挂死，让断言去报。
+     * `expect = 0`（这一趟本来就不该落盘的：无 cwd、形状不认识、别的工具、重放）没有提交标记可等 ——
+     * 那时用"静默够久"兜底（连 5 拍没有在飞/新起的操作，且至少过了 10ms）。上限是免得真出岔子时
+     * 挂死，让断言去报错；一串要落的份数多时给得宽些。
      */
-    settle: async () => {
+    settle: async (expect = 1) => {
       const commit = ops.manifests;
-      const deadline = Date.now() + 2000;
+      const deadline = Date.now() + (expect > 1 ? 20000 : 5000);
       const floor = Date.now() + 10;
       let quiet = 0;
       while (Date.now() < deadline) {
         const started = ops.started;
         await new Promise((resolve) => { setImmediate(resolve); });
         const idle = ops.inFlight === 0 && ops.started === started;
-        if (idle && ops.manifests > commit) break;          // 这一趟落了，且写完了
-        quiet = idle && Date.now() >= floor ? quiet + 1 : 0;
+        const landed = ops.manifests - commit;
+        if (idle && expect > 0 && landed >= expect) break;  // 该落的都落了，且写完了
+        quiet = idle && landed === 0 && Date.now() >= floor ? quiet + 1 : 0;
         if (quiet >= 5) break;                              // 这一趟不该落：静默够久就算它没打算落
       }
     },
@@ -128,7 +134,7 @@ test('同一个 callId 再来一次 result ⇒ 不落第二份', async () => {
     const [first] = await readdir(join(cwd, '交付物'));
     const before = await readFile(join(cwd, '交付物', first, 'manifest.json'), 'utf8');
     for (const event of list) h.feed(event);     // 重放
-    await h.settle();
+    await h.settle(0);                           // 这一趟**不该**再落：等"静默够久"，不是等提交标记
     assert.equal((await readdir(join(cwd, '交付物'))).length, 1);
     // 只数目录数**不够**：重放与首写落在同一秒里，slug 相同 ⇒ 抽掉 `resolveCallId` 那道去重闸，
     // 第二次也只会**覆盖同一份**，目录数照样是 1（实测：抽掉闸门，上面那条断言仍是绿的）。
@@ -158,10 +164,12 @@ test('形状不认识 ⇒ 不落盘、不打日志噪音', async () => {
   await withDir(async (cwd) => {
     const warnings = [];
     const h = harness(cwd, warnings);
-    h.feed({ type: 'tool/call', data: { callId: 'c', name: 't', arguments: '{"wkt":"W"}' } });
+    // 工具名必须是真的 geoclar：这条测的是**出参形状闸**，名字不改的话就可能被名字闸先挡掉，
+    // 那就变成"名字闸的用例"了（形状闸的真行为反而没人测）。
+    h.feed({ type: 'tool/call', data: { callId: 'c', name: GEOCLAR, arguments: '{"wkt":"W"}' } });
     h.feed({ type: 'tool/result', data: { message: { source: { callId: 'c' },
       content: [{ type: 'text', text: JSON.stringify({ mode: '别的' }) }] } } });
-    await h.settle();
+    await h.settle(0);
     assert.deepEqual(await readdir(join(cwd, '交付物')).catch(() => []), []);
     assert.equal(warnings.length, 0);
   });
@@ -174,4 +182,100 @@ test('形状不认识 ⇒ 不落盘、不打日志噪音', async () => {
 test('callIdOfResult：退化输入给 undefined，不硬凑一个 id', () => {
   assert.equal(callIdOfResult({}), undefined);
   assert.equal(callIdOfResult({ message: { source: { callId: '' } } }), undefined);
+});
+
+/**
+ * 名字闸（spec §4：生产者要"认出那次工具返回"）。出参形状**能渲染**，但工具不是它 ⇒ 一个字节都不碰，
+ * 也不记日志。没有这条闸，会话里任何回一段同形 JSON 的工具都会往工作区里丢一份"交付物"。
+ */
+test('别的工具（出参形状能渲染）⇒ 不落盘、不打日志', async () => {
+  await withDir(async (cwd) => {
+    const warnings = [];
+    const h = harness(cwd, warnings);
+    for (const e of events('call_x', { foo: 1 }, { name: 'other_tool' })) h.feed(e);
+    await h.settle(0);
+    assert.deepEqual(await readdir(join(cwd, '交付物')).catch(() => []), []);
+    assert.equal(warnings.length, 0);
+  });
+});
+
+/**
+ * 名字闸比的是**裸名**：连接器 serverName 是部署侧可改的配置，改名后线名就变了。
+ * 这条钉住"改名不该让它静默失效"。
+ */
+test('连接器改过名（线名里不是 geoclar）⇒ 照样认得出来', async () => {
+  await withDir(async (cwd) => {
+    const h = harness(cwd);
+    for (const e of events('call_1', { wkt: 'W' },
+      { name: 'mcp__geoclar-renamed__geoclar_recommend_schemes' })) h.feed(e);
+    await h.settle();
+    const names = await readdir(join(cwd, '交付物'));
+    assert.equal(names.length, 1);
+    assert.equal(JSON.parse(await readFile(join(cwd, '交付物', names[0], 'manifest.json'), 'utf8')).callId, 'call_1');
+  });
+});
+
+/**
+ * 同一秒、同一 subject 的两次**不同**调用：slug 的时间戳只到秒（`slugOf`），两份会算出同一个 slug。
+ * 不挪开就会覆盖 —— spec §4 要的是"每次产出落一份新的**子目录**，不归并"，覆盖等于丢一份。
+ *
+ * 秒要自己造：等到刚跨过秒边界再喂，这一秒还剩 ~950ms，两次落盘只要毫秒级。
+ * （不用 `mock.timers` 冻时钟：`settle` 的上下界用的就是 `Date.now()`，冻住它会让真出岔子时等不到上限。）
+ */
+test('同一秒、同一 subject、两个 callId ⇒ 各落一份，谁也盖不掉谁', async () => {
+  await withDir(async (cwd) => {
+    await new Promise((resolve) => { setTimeout(resolve, 1000 - (Date.now() % 1000) + 5); });
+    const h = harness(cwd);
+    for (const e of events('call_A', { wkt: 'W', maxCloud: 10 })) h.feed(e);
+    await h.settle();
+    for (const e of events('call_B', { wkt: 'W', maxCloud: 80 })) h.feed(e);
+    await h.settle();
+    const names = (await readdir(join(cwd, '交付物'))).sort();
+    assert.equal(names.length, 2);
+    const read = async (name) => ({
+      manifest: JSON.parse(await readFile(join(cwd, '交付物', name, 'manifest.json'), 'utf8')),
+      version: JSON.parse(await readFile(join(cwd, '交付物', name, 'v1.json'), 'utf8')),
+    });
+    const [a, b] = [await read(names[0]), await read(names[1])];
+    // 前提自检：两次确实落在同一秒里（不然本用例要测的撞名根本不成立）
+    const secondOf = (iso) => iso.slice(0, 19);
+    assert.equal(secondOf(a.manifest.versions[0].at), secondOf(b.manifest.versions[0].at), '两次没落在同一秒，用例不成立');
+    // 第二份被挪到 `-2`，两份各自带着自己的 callId 与自己的入参（这份没被那份覆盖）
+    assert.equal(names[1], `${names[0]}-2`);
+    assert.deepEqual([a.manifest.callId, b.manifest.callId].sort(), ['call_A', 'call_B']);
+    assert.deepEqual([a.version.intent.conditions.maxCloud, b.version.intent.conditions.maxCloud].sort(), [10, 80]);
+    // 两份都要被**列举**看得见：manifest 记的 slug 与目录名不符的话（位置闸），
+    // 只改 `documents.slug` 不改 `manifest.slug` 就会落到这个坑里 —— 比撞名还糟。
+    const listed = await listDeliverables(fs, cwd);
+    assert.deepEqual(listed.map((entry) => entry.callId).sort(), ['call_A', 'call_B']);
+    assert.deepEqual(listed.map((entry) => entry.slug).sort(), names);
+  });
+});
+
+/**
+ * 一拍里灌进一大串完整配对（80 对 > 配对器上限 `MAX_PENDING = 64`）⇒ **一份都不许丢**。
+ *
+ * 这条钉的是生产者"在**同一个 `tool/result` 事件里就地 `take`**"这条约束 —— Task 3 的
+ * `MAX_PENDING` 安全论证就架在它上面。把 `take` 挪进微任务后，这 80 对会先全部堆进账里，
+ * 只有最后 64 个还没被淘汰，其余 16 份静默丢掉（实测：写盘次数从 160 掉到 128）。
+ */
+test('一拍里灌 80 对（超过配对器上限）⇒ 80 份全落，不丢', async () => {
+  await withDir(async (cwd) => {
+    const h = harness(cwd);
+    const pairs = 80;
+    for (let i = 0; i < pairs; i++) {
+      // 每对自己的 subject，落成的目录名互不相同（不然它们会撞进同一个 slug，数不出来）
+      for (const e of events(`call_${i}`, { wkt: 'W' }, { subject: `第${i}件` })) h.feed(e);
+    }
+    await h.settle(pairs);
+    const names = await readdir(join(cwd, '交付物'));
+    assert.equal(names.length, pairs);
+    // 每份的 subject 得是**它自己那条**用户消息（事件到达时就取好）。晚取的话，这一拍里最后那条
+    // 用户消息会盖在所有 80 份头上 —— 标题全变成同一个，而这份文件是给人看的。
+    const subjects = [];
+    for (const name of names) {
+      subjects.push(JSON.parse(await readFile(join(cwd, '交付物', name, 'manifest.json'), 'utf8')).subject);
+    }
+    assert.deepEqual(subjects.sort(), Array.from({ length: pairs }, (_, i) => `第${i}件`).sort());
+  });
 });

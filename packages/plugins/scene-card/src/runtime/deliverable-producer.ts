@@ -7,8 +7,8 @@
  *
  * 每个会话一个配对器（callId 只在会话内唯一），随会话第一次出现时创建。
  */
-import { buildDeliverableDocuments } from './deliverable-document.js';
-import { resolveCallId, writeDeliverable, type StoreFs } from './deliverable-store.js';
+import { bareToolName, buildDeliverableDocuments } from './deliverable-document.js';
+import { listDeliverables, writeDeliverable, type StoreFs } from './deliverable-store.js';
 import { callIdOfResult, ToolCallPairing, type PairingInput } from './tool-call-pairing.js';
 
 /** 会话对象里本模块用到的部分。 */
@@ -21,6 +21,31 @@ export interface ProducerContext {
   readonly fs: StoreFs;
   on(event: 'session/event', handler: (session: SessionLike, event: PairingInput) => void): void;
   readonly logger: (name: string) => { warn(message: string): void };
+}
+
+/**
+ * 只认这个工具（**裸名**）：spec §4 要生产者"认出那次工具返回"。
+ *
+ * 比裸名而不是线名 `mcp__<连接器 serverName>__geoclar_recommend_schemes`：连接器是部署侧可改的配置，
+ * 改名后线名就变了（技能文档把这条写明了），写死 `mcp__geoclar__` 会随改名**静默失效**。
+ */
+const PRODUCER_TOOL = 'geoclar_recommend_schemes';
+
+/**
+ * slug 撞了就往后退一位：`-2`、`-3`…直到空出来。
+ *
+ * 为什么会撞：slug 的时间戳只到**秒**（`slugOf`），同一秒里同一 subject 的两次调用（模型重试、
+ * 换个条件再算一次）算出同一个 slug，而后一份会落进同一个目录 —— spec §4 要的是"每次产出落一份新的
+ * 子目录，不归并"，覆盖就等于**无声地丢掉一份**（manifest 也被换掉，`callId` 从此查不到）。
+ *
+ * 后缀仍在 64 个码点以内：加后缀前先把底裁短（照 `slugOf` 的口径按码点裁，别把代理对劈开）。
+ */
+function freeSlug(base: string, taken: ReadonlySet<string>): string {
+  for (let n = 2; ; n++) {
+    const suffix = `-${n}`;
+    const candidate = `${Array.from(base).slice(0, 64 - suffix.length).join('')}${suffix}`;
+    if (!taken.has(candidate)) return candidate;
+  }
 }
 
 export function registerDeliverableProducer(ctx: ProducerContext): void {
@@ -44,6 +69,14 @@ export function registerDeliverableProducer(ctx: ProducerContext): void {
     const paired = pairing.take(callId);
     if (paired === undefined) return;
 
+    // 不是那次工具返回 ⇒ 静默走开，落盘的事一个字都不提。
+    if (bareToolName(paired.toolName) !== PRODUCER_TOOL) return;
+
+    // subject 与时间戳在**这里**取，不在微任务里取：晚取的话，这一拍新到的用户消息会变成
+    // 上一轮那次调用的标题，`at` 也漂到写盘时刻去（spec §4 要的是"工具返回的那一刻"）。
+    const subject = pairing.latestUserMessage();
+    const at = new Date();
+
     // 立刻返回，落盘在微任务里跑 —— 慢写不拖住会话提交。
     void Promise.resolve().then(async () => {
       const cwd = session.header?.cwd;
@@ -54,13 +87,20 @@ export function registerDeliverableProducer(ctx: ProducerContext): void {
       }
       const documents = buildDeliverableDocuments({
         callId: paired.callId, toolName: paired.toolName, args: paired.args, result: paired.result,
-        subject: pairing.latestUserMessage(), at: new Date(),
+        subject, at,
       });
       // 形状读不懂 ⇒ 这次不落。**不记日志**：那是"这个工具返回了别的东西"，不是异常。
       if (documents === undefined) return;
+      // 一次列举供两件事用（不扫两遍）：这一份是不是已经落过，以及哪些 slug 已被占。
+      const existing = await listDeliverables(ctx.fs, cwd);
       // 同一个 callId 已经落过（重复的 result 事件）⇒ 不落第二份。
-      if (await resolveCallId(ctx.fs, cwd, paired.callId) !== undefined) return;
-      await writeDeliverable(ctx.fs, cwd, documents);
+      if (existing.some((entry) => entry.callId === paired.callId)) return;
+      const taken = new Set(existing.map((entry) => entry.slug));
+      const slug = taken.has(documents.slug) ? freeSlug(documents.slug, taken) : documents.slug;
+      // slug 与 `manifest.slug` **两个都得改**：T2 的存储层有位置闸（manifest 记的 slug 必须等于
+      // 它所在目录的名字），只改一个，这份交付物在 `listDeliverables` 眼里就不存在 —— 比撞名还糟。
+      await writeDeliverable(ctx.fs, cwd, slug === documents.slug ? documents
+        : { slug, manifest: { ...documents.manifest, slug }, version: documents.version });
     }).catch((cause: unknown) => {
       // 落盘失败不该冒到会话事件流上：流是 fire-and-forget，别人还在提交。
       logger.warn(`交付物落盘失败：${cause instanceof Error ? cause.message : String(cause)}`);
