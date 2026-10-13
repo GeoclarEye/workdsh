@@ -7,7 +7,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { deliverableDirOf, listDeliverables, resolveCallId, writeDeliverable }
   from '../dist/runtime/deliverable-store.js';
 
@@ -45,6 +45,8 @@ test('落盘：两个文件都写出；目录自己建出来；正文是两空�
     // 真正的格式断言（不是只 round-trip 一遍 JSON）：缩进是两空格、结尾不留换行。
     assert.match(manifestText, /^\{\n {2}"format":/);
     assert.ok(!manifestText.endsWith('\n'), '结尾不该有换行');
+    // 目录名与盘上 manifest 记的 slug 相符：夹具两侧同值，锚的是"店开在它自己招牌下"这件事。
+    assert.equal(basename(path), JSON.parse(manifestText).slug);
     const versionText = await readFile(join(path, 'v1.json'), 'utf8');
     assert.equal(JSON.parse(versionText).type, 'scene-schemes');
     assert.match(versionText, /^\{\n {2}"format":/);
@@ -82,5 +84,19 @@ test('反查：半份 JSON（写到一半）⇒ 跳过那一份，不抛', async
     const path = await writeDeliverable(fs, cwd, docs('20261013-045800-a', 'call_1'));
     await writeFile(join(path, 'manifest.json'), '{"format":"workdsh-deliv', 'utf8');
     assert.equal(await resolveCallId(fs, cwd, 'call_1'), undefined);
+  });
+});
+
+test('正文写失败 ⇒ 不留 manifest，列表里也就看不到半份交付物', async () => {
+  await withDir(async (cwd) => {
+    const failing = {
+      resolve: fs.resolve,
+      writeText: async (target, content) => {
+        if (String(target.absolute).endsWith('v1.json')) throw new Error('写正文失败');
+        await writeFile(target.absolute, content, 'utf8');
+      },
+    };
+    await assert.rejects(() => writeDeliverable(failing, cwd, docs('20261013-045800-a', 'call_1')));
+    assert.deepEqual(await listDeliverables(fs, cwd), []);
   });
 });

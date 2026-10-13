@@ -34,12 +34,14 @@ function serialize(value: unknown): string {
 export async function writeDeliverable(fs: StoreFs, cwd: string, documents: DeliverableDocuments): Promise<string> {
   const dir = deliverableDirOf(cwd, documents.slug);
   await mkdir(dir, { recursive: true });
-  const manifest = await fs.resolve(join(dir, 'manifest.json'), { cwd });
-  await fs.writeText(manifest, serialize(documents.manifest));
+  // 正文先写、manifest 后写：manifest 是"这一份完整了"的提交标记 —— `listDeliverables` 正是
+  // 以 manifest 为闸，先写它会让半份交付物被列出来（那份的 `current` 还指不到任何文件）。
   const current = documents.manifest.current;
   const versionFile = typeof current === 'string' && current !== '' ? current : 'v1.json';
   const version = await fs.resolve(join(dir, versionFile), { cwd });
   await fs.writeText(version, serialize(documents.version));
+  const manifest = await fs.resolve(join(dir, 'manifest.json'), { cwd });
+  await fs.writeText(manifest, serialize(documents.manifest));
   return dir;
 }
 
