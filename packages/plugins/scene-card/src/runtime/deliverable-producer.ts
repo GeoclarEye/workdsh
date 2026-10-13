@@ -97,6 +97,11 @@ export function registerDeliverableProducer(ctx: ProducerContext): void {
     if (event.type !== 'tool/result') return;
 
     // 只有"刚配齐"的那次才继续；其余的（还在跑、读不懂、已取过）在这里就被挡掉。
+    //
+    // **这里的顺序是有讲究的**：每一次 `tool/result` 都先 `take`（在下面的工具名闸**之前**），
+    // 且与事件同步完成、不挂微任务。配对器那两个账之所以在整合后的调用下不会涨，就是因为
+    // 每一份 result 都在这里被取走（见 `tool-call-pairing.ts` 的上界说明）——别把 `take` 挪到
+    // 名字闸后面，也别挪进微任务（Task 3 的上界论证依赖这条同步性，有用例钉着）。
     const callId = callIdOfResult(event.data);
     if (callId === undefined) return;
     const paired = pairing.take(callId);

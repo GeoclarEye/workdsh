@@ -14,6 +14,8 @@
  * 说明后端在讲一件我不认识的事 —— 那种情况下少画一块就是撒谎，宁可回去画通用卡片。
  */
 
+import { primaryOf } from '../shared/primary-scheme.js';
+
 /** 每套方案最多留 20 条景摘要 —— 与检索工具的 `MAX_SCENES` 同一口径（spec §3.3）。 */
 export const MAX_SCENE_SUMMARIES = 20;
 
@@ -249,9 +251,9 @@ export function buildDeliverableView(input: DeliverableInput | undefined): Deliv
     schemes.push(scheme);
   }
 
-  const primary = schemes.find((scheme) => scheme.key === 'CUSTOM')
-    ?? schemes.find((scheme) => scheme.key === 'VALUE')
-    ?? schemes[0];
+  // 主推那一套：选法与交付物 `summary` 共用同一份（`shared/primary-scheme.ts`）——
+  // 面板高亮的与凭据里引用的必须是同一套。
+  const primary = primaryOf(schemes);
   const pool = readPool(payload.pool, payload.poolAtLimit === true);
   return {
     schemes,

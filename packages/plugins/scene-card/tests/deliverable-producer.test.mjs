@@ -62,7 +62,6 @@ const events = (callId, args, extra = {}) => [
     content: [{ type: 'text', text: JSON.stringify(extra.value ?? payload) }] } } },
 ];
 
-/** 装一个假 ctx，把 on 收到的 handler 抓住，返回一个"喂事件"的函数。 */
 /**
  * 装一个假 ctx，把 `on` 收到的 handler 抓住，返回一个"喂事件"的函数。
  * `options.fs` / `options.warn` 用来换掉那两样（要造"写盘失败""记日志自己抛"这类形状时）。

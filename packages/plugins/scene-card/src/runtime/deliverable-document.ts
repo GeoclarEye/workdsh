@@ -6,8 +6,11 @@
  *   · `type` 不认识 / 形状读不懂 ⇒ **整份不写**，绝不写半份；
  *   · `payload` 逐字来自出参、`intent` 逐字来自入参 —— 生产者**不重命名、不补齐**。
  *
- * 与 `scheme-view.ts` 同一套严格度：缺 → 少一块，有但读不懂 → 整份不画。
+ * 与 `scheme-view.ts` 同一套严格度：缺 → 少一块，有但读不懂 → 整份不画。**有一处本层更严**：
+ * `schemes` 是空数组时视图层照画（画出来是一片空），这里**整份不写** —— 空池没有可交付的东西，
+ * 也就不该产出一份凭据（spec §7）。
  */
+import { primaryOf } from '../shared/primary-scheme.js';
 
 export interface DeliverableDocuments {
   /** 目录名：`<时间戳>-<短标题>`。 */
@@ -115,12 +118,9 @@ function conditionsOf(args: unknown): Record<string, unknown> {
   return out;
 }
 
-/** 主推那一套（`CUSTOM` 优先，其次 `VALUE`，再次第一套）—— 与 `scheme-view.ts` 同一口径。 */
-function primaryOf(result: Record<string, unknown>): Record<string, unknown> | undefined {
-  const schemes = result.schemes as Record<string, unknown>[];
-  return schemes.find((scheme) => scheme.key === 'CUSTOM')
-    ?? schemes.find((scheme) => scheme.key === 'VALUE')
-    ?? schemes[0];
+/** 出参里那组方案。形状闸（`resultIsRenderable`）已保证它是非空数组，这里只是把它取出来。 */
+function schemesOf(result: Record<string, unknown>): readonly Record<string, unknown>[] {
+  return Array.isArray(result.schemes) ? result.schemes as Record<string, unknown>[] : [];
 }
 
 /**
@@ -131,7 +131,7 @@ function primaryOf(result: Record<string, unknown>): Record<string, unknown> | u
  * （来自**出参**）。缺哪个数就省哪个分句；一个都缺就写空串 —— 不编一句套话。
  */
 function summaryOf(result: Record<string, unknown>, args: unknown): string {
-  const primary = primaryOf(result);
+  const primary = primaryOf(schemesOf(result));
   const clauses: string[] = [];
   const maxCloud = isRecord(args) ? args.maxCloud : undefined;
   if (typeof maxCloud === 'number' && Number.isFinite(maxCloud)) {
@@ -150,7 +150,7 @@ export function buildDeliverableDocuments(input: BuildInput): DeliverableDocumen
   const { result } = input;
   // 形状读不懂 ⇒ 这次不落。**不抛**：生产者跑在会话事件流上，抛出去会污染别人的提交。
   if (!resultIsRenderable(result)) return undefined;
-  const scheme = primaryOf(result)?.key;
+  const scheme = primaryOf(schemesOf(result))?.key;
   if (typeof scheme !== 'string') return undefined;
 
   const at = input.at;

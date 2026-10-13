@@ -13,13 +13,23 @@
  */
 import type { Context } from '@deepseek-ai/cordis';
 import type {} from '@deepseek-ai/dsh-fs';
+// 只为两样：`ctx.sessions` 的模块增强（`SessionStore`）与那个 brand 类型。
+import type { SessionId } from '@deepseek-ai/dsh-session';
 import type { ConnectionRpcResult, HostConnectionHandle } from '@deepseek-ai/dsh-client-connection';
 import { listDeliverables, resolveCallId, type StoreFs } from './runtime/deliverable-store.js';
-import { registerDeliverableProducer } from './runtime/deliverable-producer.js';
+import { registerDeliverableProducer, type ProducerContext } from './runtime/deliverable-producer.js';
 
 export const name = 'workdsh-plugin-scene-card';
 
-export const inject = ['connection', 'fs'];
+/**
+ * 本插件**整体**要的只有 `connection`。
+ *
+ * `fs` 只有生产者要（见 `apply` 里那层单独的子插件），**不能**挂在这一层：一个注入的服务缺席时
+ * 插件不是"跳过某半边"而是**整个不生效**（cordis 的注入是"等到齐"），于是没有 `fs` 的部署里
+ * 连既有的 `portal` 路由都会一起消失 —— 面板据它决定「去门户导出」按钮开不开，那是一次静默的
+ * 功能丢失。先例 `projects/src/index.ts:10` vs `:21` 是同一个分工。
+ */
+export const inject = ['connection'];
 
 /** 本插件的配置面。 */
 export interface SceneCardOptions {
@@ -39,6 +49,15 @@ const fail = (code: string, message: string): ConnectionRpcResult<never> =>
 const record = (value: unknown): Record<string, unknown> | undefined =>
   (value !== null && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown> : undefined);
+
+/**
+ * 会话 id 的 brand 只是编译期记号（`Branded<'SessionId'>` 是 `string & {…}`），值就是那个字符串。
+ *
+ * 这里自己盖一下，而不是引 `@deepseek-ai/dsh-brand` 的 `brandString`：那要多一个本插件没有的依赖，
+ * 而它做的事与这一行逐字相同。**只在从请求体读出 id 的那一处用** —— 这条路由不是 typert Remote，
+ * 没有线上解码器替我盖 brand，所以裸串进到这里是常态。
+ */
+const sessionIdOf = (value: string): SessionId => value as SessionId;
 
 /**
  * 注册「交付物面板要的那点宿主事实」这一条路由。
@@ -61,35 +80,60 @@ export function registerSceneCardConnection(ctx: Context, options: SceneCardOpti
           { headers: { 'cache-control': 'no-store' } });
       }
       if (body?.endpoint === 'deliverables') {
-        // 现取而不是挂载时取：`ctx.fs` 是服务取值，宿主换过 fs 提供方后这条路由跟着换。
+        // `fs` 与 `sessions` 都在**请求时才取**，而且用 `ctx.get` 而不是 `ctx.fs` / `ctx.sessions`：
+        // `get` 的文档就是"读服务，绕开 inject 要求"（有提供者就给，没有就 `undefined`，不抛），
+        // 所以这条路由不因为"这个部署有没有 fs / 有没有会话服务"而挂不上 —— 少哪一样，
+        // 只在它自己的答复里说出来。
         //
-        // 标注写明确、**不做断言**：存储层要的是 `ctx.fs` 那一小块结构类型（`StoreFs`），
+        // `fs` 的标注写明确、**不做断言**：存储层要的是那一小块结构类型（`StoreFs`），
         // 能不能赋值由编译器当场判（`FileSystem` 的五个成员逐个对得上），对不上就编译不过 ——
         // 而不是靠一句 `as` 把不确定性盖过去。
-        const fs: StoreFs = ctx.fs;
+        const fs: StoreFs | undefined = ctx.get('fs');
         const payload = record(body.payload);
-        // `cwd` 由客户端上送，是**该会话自己的工作区根**，这一版直接信它（spec §4）。
-        // 信得起的原因有两条，都写在明面上：它只用来在**调用者自己的工作区里读一个固定目录**
-        // （`交付物/`，见 `deliverable-store.ts`），不被拼成任意路径；而这条路由本身已经在
-        // `connection.fetch` 的信任边界之内 —— `ConnectionFetchRoute.fetch` 的契约是
-        // "after the physical carrier has applied its trust and authentication policy"
-        // （`dsh-client-connection/rpc.d.ts`）。**别据此把这层扩展成任意路径读写**：
-        // 那两条理由都撑不住任意路径。
-        const cwd = typeof payload?.cwd === 'string' ? payload.cwd : undefined;
-        if (cwd === undefined || cwd === '') {
-          return Response.json(fail('scene-card/invalid-request', '缺少工作区根。'), { status: 400 });
+        // 工作区根**由宿主按会话 id 解析**，请求里报什么都不算数。
+        //
+        // 来源与官方 `dsh-api-workspace-files` 的 `workspaceFileScope` 是同一处：会话 header 的
+        // `cwd`（`sessions.get(id)?.header.cwd`）。生产者也正是写进这个 `cwd`，读写两边因此同源；
+        // 而客户端**不必**、也拿不到会话的 cwd（本仓 `src/client/**` 一处都没读过 `header.cwd`）。
+        //
+        // 这一版**不跟随** `workspaceFileScope` 那句 `?? sandboxPolicy.workspaceRoot` 的兜底：
+        // 生产者只往有 cwd 的会话里写（没有就 warn 并跳过，spec §7），读侧回退到另一个根只会读出
+        // "这份会话本来就没写过"的空目录 —— 拿一个看着正常的结果掩盖缺口，正是要避免的那种。
+        //
+        // **别据此把这层扩展成任意路径读写**：根是宿主按会话定死的，这里只读它下面那个固定子目录
+        // （`交付物/`，见 `deliverable-store.ts`），不接受任何由调用者拼进来的路径。
+        const sessionId = typeof payload?.sessionId === 'string' ? payload.sessionId : '';
+        if (sessionId === '') {
+          return Response.json(fail('scene-card/invalid-request', '缺少会话 id。'), { status: 400 });
         }
-        if (payload?.action === 'list') {
+        const session = ctx.get('sessions')?.get(sessionIdOf(sessionId));
+        if (session === undefined) {
+          // 认不出这个会话就**不猜**：回一个空列表会被调用方读成"这一份交付物都没有"。
+          return Response.json(
+            fail('scene-card/unknown-session', '这个会话不在宿主的活跃会话里。'), { status: 400 });
+        }
+        const action = payload?.action;
+        if (action !== 'list' && action !== 'resolve') {
+          return Response.json(fail('scene-card/invalid-request', '未知的交付物面板请求。'), { status: 400 });
+        }
+        if (fs === undefined) {
+          return Response.json(fail('scene-card/unavailable', '这个部署没有文件系统。'), { status: 503 });
+        }
+        // 没有 cwd 的会话：生产者正是**跳过**它们（spec §7），所以"什么都列不出来"才是实话，
+        // 不是错误 —— 别把它做成 4xx，那会让面板把"本来就没有"显示成"出错了"。
+        const cwd = session.header?.cwd;
+        if (cwd === undefined || cwd === '') {
+          return Response.json(ok(action === 'list' ? { entries: [] } : { path: null }),
+            { headers: { 'cache-control': 'no-store' } });
+        }
+        if (action === 'list') {
           return Response.json(ok({ entries: await listDeliverables(fs, cwd) }),
             { headers: { 'cache-control': 'no-store' } });
         }
-        if (payload?.action === 'resolve') {
-          const callId = typeof payload.callId === 'string' ? payload.callId : '';
-          const path = await resolveCallId(fs, cwd, callId);
-          return Response.json(ok({ path: path ?? null }),
-            { headers: { 'cache-control': 'no-store' } });
-        }
-        return Response.json(fail('scene-card/invalid-request', '未知的交付物面板请求。'), { status: 400 });
+        const callId = typeof payload?.callId === 'string' ? payload.callId : '';
+        const path = await resolveCallId(fs, cwd, callId);
+        return Response.json(ok({ path: path ?? null }),
+          { headers: { 'cache-control': 'no-store' } });
       }
       return Response.json(fail('scene-card/invalid-request', '未知的交付物面板请求。'), { status: 400 });
     },
@@ -100,25 +144,34 @@ export function registerSceneCardConnection(ctx: Context, options: SceneCardOpti
 export async function apply(ctx: Context, options: SceneCardOptions = {}): Promise<void> {
   await ctx.plugin({
     name: 'workdsh-scene-card-integration',
-    inject: ['connection', 'fs'],
+    // 这一层只依赖 `connection`：路由与它同层，**不该**因为某个部署没有 `fs` 就跟着挂不上。
+    inject: ['connection'],
     apply: (integration: Context) => {
-      // **不要**把 cordis 的 `ctx` 直接当 `ProducerContext` 传：显式构造一层适配，把
-      // `Session` / `SessionEvent` → `SessionLike` / `PairingInput` 这层映射收在一处
-      // （与 `deliverable-attribution.ts` 在内部构造 `deps` 是同一手法）。
-      //
-      // 实测（task-5 报告）：直接传 `integration` 也**编译得过**，所以适配层挡的**不是**编译
-      // 错误 —— cordis 的 `on` 是方法语法，参数按双变检查，结构不符它不拦。它买到的是
-      // "谁在第几位"只有一份、写在脸上：这两样运行时都是普通对象，接错了不会报错，只会静默不落盘。
-      registerDeliverableProducer({
-        fs: integration.fs,
-        on: (event, handler) => {
-          integration.on(event, (session, payload) => {
-            handler(session, payload);
-          });
-        },
-        logger: (name) => integration.logger(name),
-      });
       registerSceneCardConnection(integration, options);
+      // 生产者多要一样 `fs`，所以**单独挂一层**（`ctx.inject` 就是 `ctx.plugin({ inject })` 的简写）。
+      // 少 `fs` 时只有生产者不挂，上面那条路由照常服务 —— 缺依赖的插件是"等"，等不到的整个不生效，
+      // 所以这层必须分出来。
+      integration.inject(['fs'], (withFs: Context) => {
+        // **不要**把 cordis 的 `ctx` 直接当 `ProducerContext` 传：显式构造一层适配，把
+        // `Session` / `SessionEvent` → `SessionLike` / `PairingInput` 这层映射收在一处
+        // （与 `deliverable-attribution.ts` 在内部构造 `deps` 是同一手法）。
+        //
+        // 实测（task-5 报告）：直接传 `integration` 也**编译得过**，所以适配层挡的**不是**编译
+        // 错误 —— cordis 的 `on` 是方法语法，参数按双变检查，结构不符它不拦。它买到的是
+        // "谁在第几位"只有一份、写在脸上：这两样运行时都是普通对象，接错了不会报错，只会静默不落盘。
+        const adapter: ProducerContext = {
+          // 与路由同一取法：**用的时候现取**，不把挂载那一刻的服务对象钉死 ——
+          // 宿主换过 fs 提供方后，路由与生产者要一起换（`ctx.fs` 本来就是服务取值）。
+          get fs(): StoreFs { return withFs.fs; },
+          on: (event, handler) => {
+            withFs.on(event, (session, payload) => {
+              handler(session, payload);
+            });
+          },
+          logger: (name) => withFs.logger(name),
+        };
+        registerDeliverableProducer(adapter);
+      });
     },
   });
 }

@@ -66,6 +66,11 @@ function parseArguments(raw: unknown): { ok: true; value: unknown } | { ok: fals
  *
  * **导出**：生产者也要读同一个 id（`deliverable-producer.ts`）。这条读法最容易写错（id 埋在
  * `message` 里而不是顶层），两处各写一份必然漂移。
+ *
+ * 同一个 id 在 `packages/plugins/activity/src/projection.ts` 是**相反**的兜底顺序（先 `toolCallId`）。
+ * 两个字段在官方的 `ToolResultMessage` 上**都必填**，正常情况下同值，所以分歧只在残缺事件里出现；
+ * 分歧时以**本处**为准 —— 交付物这条链认的就是这里读出来的 id（manifest 记它、面板按它反查路径）。
+ * 那边读的是另一个用途（活动态），不去改它的顺序，只在两处各留一句指路。
  */
 export function callIdOfResult(data: unknown): string | undefined {
   if (!isRecord(data)) return undefined;
@@ -97,13 +102,16 @@ function textOfUserMessage(data: unknown): string | undefined {
 /**
  * 一个会话的配对器。**每个会话一个实例** —— callId 只在会话内唯一。
  *
- * 两个账都只留最近 `MAX_PENDING` 条：一次会话里排队的调用不该无界增长，
- * 而超出的那些本来就是"很久没等到 result"的，丢了也不影响正确性（取不到就不落）。
+ * 两个账都只留最近 `MAX_PENDING` 条。这个上界是**防御性**的，不是被谁逼出来的：
+ * **当前**的生产者对每一次 `tool/result` 都 `take`（而且是在工具名闸之前，见
+ * `deliverable-producer.ts`），所以 `settled` 在整合后的调用下根本涨不起来
+ * （`settled` 的键始终是 `pending` 键的子集）。上界保的是另外两种情形：将来有人只看不取的
+ * 调用方，以及一次挤进超过 `MAX_PENDING` 次调用的突发 —— 而这两个 Map 活在本进程里、
+ * 与会话同寿，不能无界。
  *
- * `settled` 也必须跟着 `pending` 一起淘汰，且理由不只是对称：生产者只 `take` 它关心的
- * 那一个工具（geoclar），会话里其余每次工具调用的结果载荷**永远不会被 take 走** ——
- * 而这个 Map 活在本进程里、与会话同寿。只有淘汰 `pending` 时顺手删掉同 id 的 `settled`，
- * 才能让它保持有界（`settled` 的键始终是 `pending` 键的子集）。
+ * 淘汰**吃的是最老的那条**（`pending` 的插入序）。要认清它是哪一种代价：最老的那条恰恰是
+ * **等了最久、最可能还在飞**的一次调用（连接器的超时按分钟计），所以这是"突发深于 64 时认赔
+ * 最老的一条"，而不是"丢一个早就没结果的"。被丢的那次取不到就不落 —— 不会写出半份。
  */
 export const MAX_PENDING = 64;
 
@@ -131,8 +139,8 @@ export class ToolCallPairing {
       if (this.pending.size > MAX_PENDING) {
         const oldest = this.pending.keys().next();
         if (!oldest.done) {
-          // 被淘汰的 call 已经不可能再配成对（`take` 要求 `pending` 与 `settled` 同时在），
-          // 它的结果留着也取不走 —— 顺手删掉，否则 `settled` 随会话无限涨。
+          // 被淘汰的这条 call 从 `pending` 走了就不可能再配成对（`take` 要求两个账同时在），
+          // 它的 result 也就永远取不走了 —— 顺手删掉，别让它白占着内存。
           this.pending.delete(oldest.value);
           this.settled.delete(oldest.value);
         }
@@ -172,7 +180,7 @@ export class ToolCallPairing {
 
   /**
    * 只为诊断与测试：这两个账都是**有界**的（见 {@link MAX_PENDING}）。
-   * 生产者只 `take` 它关心的那一个工具，其余调用的结果载荷不能无限滞留。
+   * 这个上界是防御性的 —— 整合后的生产者每次 `tool/result` 都 `take`，有界并不靠它来成立。
    */
   retained(): { readonly pending: number; readonly settled: number } {
     return { pending: this.pending.size, settled: this.settled.size };
