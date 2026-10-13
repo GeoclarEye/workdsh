@@ -57,14 +57,33 @@ function freeSlug(base: string, taken: ReadonlySet<string>): string {
  * 串成一条链就没有交错：对盘上"列举 + 写"这件事，链上的每一段是原子的。
  * 链跨会话共用：撞名判据是**目录**，同一个工作区被两个会话共用时也得串。
  *
- * 链尾挂着 `.catch`（见调用处）：一次失败不能把后面每一份都毒死，所以 `writeChain` 永远是一条
- * **已解决**的链，失败的记账仍走"落盘失败只记日志"那一条路。
+ * 链尾挂着**两道** `.catch`（见调用处）：一次落盘失败、乃至"记账本身抛错"，都不能把后面每一份
+ * 毒死 —— 所以 `writeChain` 永远是一条**已解决**的链。
  */
 let writeChain: Promise<void> = Promise.resolve();
 
 export function registerDeliverableProducer(ctx: ProducerContext): void {
   const logger = ctx.logger('workdsh-scene-card');
-  /** 会话 id → 配对器。会话数量有界（一次进程的活跃会话），不必淘汰。 */
+
+  /**
+   * 落盘失败的唯一记账处：只记**一条**日志，本身**绝不往外抛**。
+   *
+   * 它跑在 `writeChain` 的尾部，所以它自己抛出去就等于把链留成 rejected：后面每一份的
+   * `writeChain.then(body)` 都会**跳过 body**，而且从此一直跳过 —— 整条链静默丢弃，
+   * 比它想报的那一次失败糟得多。而它确实可能抛：`logger.warn` 是宿主代码（宿主状态不对会抛），
+   * `String(cause)` 碰上 `toString` 会抛的对象也会抛。所以调用处它身后还挂了一道兜底的 `.catch`。
+   */
+  const noteWriteFailure = (cause: unknown): void => {
+    logger.warn(`交付物落盘失败：${cause instanceof Error ? cause.message : String(cause)}`);
+  };
+
+  /**
+   * 会话 id → 配对器（每个会话一个实例，callId 只在会话内唯一）。
+   *
+   * **只增不删**：这条流上没有"会话结束"这类事件可挂，所以进程见过的每个会话都会留着，
+   * 各自还拽着最近一条用户消息。量随"见过的会话数"增长，**不是**"当前活跃会话数"。
+   * 已知且记录在案（task-4 报告 §7 F-H），按裁定本期不动。
+   */
   const pairings = new Map<string, ToolCallPairing>();
 
   ctx.on('session/event', (session, event) => {
@@ -115,11 +134,11 @@ export function registerDeliverableProducer(ctx: ProducerContext): void {
       // 它所在目录的名字），只改一个，这份交付物在 `listDeliverables` 眼里就不存在 —— 比撞名还糟。
       await writeDeliverable(ctx.fs, cwd, slug === documents.slug ? documents
         : { slug, manifest: { ...documents.manifest, slug }, version: documents.version });
-    }).catch((cause: unknown) => {
-      // 落盘失败不该冒到会话事件流上（流是 fire-and-forget，别人还在提交），也不能把链断掉 ——
-      // 这个 `.catch` 让 `writeChain` 始终是**已解决**的链，后面每一份照落。
-      logger.warn(`交付物落盘失败：${cause instanceof Error ? cause.message : String(cause)}`);
-    });
+    }).catch(noteWriteFailure)
+      // 兜底：`noteWriteFailure` 自己抛（宿主日志管道坏了、`String(cause)` 抛）时，也不能把链留成
+      // rejected —— 那会让后面每一份都被跳过、静默丢弃。**别把这一行当冗余删掉**：
+      // 它保的就是"一次报错不牵连后面的落盘"。
+      .catch(() => {});
   });
 }
 

@@ -15,7 +15,7 @@ import { listDeliverables } from '../dist/runtime/deliverable-store.js';
  * `ctx.fs` 的薄壳，落到真 node:fs —— 与 `deliverable-store.test.mjs` 同一份（那处已逐条钉过）。
  *
  * 这里**必须**是完整的一份，不能只给 `resolve` + `writeText`：生产者落盘走的是 `writeDeliverable`
- * （它要 `processPath` 才拿得到执行世界的绝对路径），去重走的是 `resolveCallId`（它要 `listDir` +
+ * （它要 `processPath` 才拿得到执行世界的绝对路径），去重走的是 `listDeliverables`（它要 `listDir` +
  * `readText` 才扫得出 manifest）。缺哪个，生产者那条 `.catch` 都会把缺口的 TypeError 咽成一条日志 ——
  * 测试只会看见"没落盘"，看不出为什么。而且 `resolve` 必须按 `path.resolve` 语义拼，
  * 不能原样返回入参：`writeDeliverable` 交给 `mkdir`/`writeFile` 的是 `processPath` 的结果，
@@ -63,12 +63,16 @@ const events = (callId, args, extra = {}) => [
 ];
 
 /** 装一个假 ctx，把 on 收到的 handler 抓住，返回一个"喂事件"的函数。 */
-function harness(cwd, warnings = []) {
+/**
+ * 装一个假 ctx，把 `on` 收到的 handler 抓住，返回一个"喂事件"的函数。
+ * `options.fs` / `options.warn` 用来换掉那两样（要造"写盘失败""记日志自己抛"这类形状时）。
+ */
+function harness(cwd, warnings = [], options = {}) {
   let handler;
   registerDeliverableProducer({
-    fs,
+    fs: options.fs ?? fs,
     on: (name, fn) => { assert.equal(name, 'session/event'); handler = fn; },
-    logger: () => ({ warn: (message) => { warnings.push(message); } }),
+    logger: () => ({ warn: options.warn ?? ((message) => { warnings.push(message); }) }),
   });
   const session = { id: 'sess-1', header: { cwd } };
   return {
@@ -160,7 +164,7 @@ test('同一个 callId 再来一次 result ⇒ 不落第二份', async () => {
     for (const event of list) h.feed(event);     // 重放
     await h.settle(0);                           // 这一趟**不该**再落：等"静默够久"，不是等提交标记
     assert.equal((await readdir(join(cwd, '交付物'))).length, 1);
-    // 只数目录数**不够**：重放与首写落在同一秒里，slug 相同 ⇒ 抽掉 `resolveCallId` 那道去重闸，
+    // 只数目录数**不够**：重放与首写落在同一秒里，slug 相同 ⇒ 抽掉 `listDeliverables` 那道去重闸，
     // 第二次也只会**覆盖同一份**，目录数照样是 1（实测：抽掉闸门，上面那条断言仍是绿的）。
     // manifest 的 `at` 是毫秒级的，而两次写入之间隔着一次 `settle`（≥10ms，见上）——
     // 真被改写过就必然是另一串字节，这条才钉得住"不落第二份"。
@@ -320,5 +324,39 @@ test('一拍里灌 80 对（超过配对器上限）⇒ 80 份全落，不丢', 
       subjects.push(JSON.parse(await readFile(join(cwd, '交付物', name, 'manifest.json'), 'utf8')).subject);
     }
     assert.deepEqual(subjects.sort(), Array.from({ length: pairs }, (_, i) => `第${i}件`).sort());
+  });
+});
+
+/**
+ * 记日志这件事**自己抛**时，也不能把后面的落盘毒死。
+ *
+ * 记账函数挂在落盘链的尾部：它抛出去，`writeChain` 就被留成 rejected，后面每一份的
+ * `writeChain.then(body)` 都会跳过 body —— 而且从此一直跳过，一次报错牵连掉此后**全部**交付物。
+ * `logger.warn` 是宿主代码（宿主状态不对会抛），`String(cause)` 碰上会抛的 `toString` 也会抛，
+ * 所以链尾挂了两道 catch。把最后那道兜底删掉，这条用例就该红。
+ */
+test('记日志自己抛 ⇒ 后面的落盘照落', async () => {
+  await withDir(async (cwd) => {
+    let writes = 0;
+    const flaky = {
+      ...fs,
+      writeText: async (target, content) => {
+        if (++writes === 1) throw new Error('磁盘满了');      // 第一份落盘失败 ⇒ 走到记账那一步
+        await fs.writeText(target, content);                  // 之后正常（计数与写盘仍走原来那份）
+      },
+    };
+    const warnings = [];
+    const h = harness(cwd, [], {
+      fs: flaky,
+      warn: (message) => { warnings.push(message); throw new Error('日志管道坏了'); },
+    });
+    for (const e of events('call_A', { wkt: 'W' }, { subject: '甲' })) h.feed(e);
+    for (const e of events('call_B', { wkt: 'W' }, { subject: '乙' })) h.feed(e);
+    await h.settle();
+    assert.equal(warnings.length, 1);                        // 记账**试过**一次（先记下、才抛）
+    assert.match(warnings[0], /落盘失败/);
+    // 走列举（不是逐个读目录）：第一份失败留下的那个空壳目录没有 manifest，本就不算交付物
+    const listed = await listDeliverables(fs, cwd);
+    assert.deepEqual(listed.map((entry) => entry.callId), ['call_B']);
   });
 });
