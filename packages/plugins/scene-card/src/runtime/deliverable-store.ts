@@ -6,7 +6,7 @@
  *
  * `ctx.fs` 没有 mkdir，所以建目录走 `node:fs/promises`（先例：`projects/src/runtime/project-workspace.ts`）。
  */
-import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { DELIVERABLE_FORMAT, DELIVERABLE_SCHEMA_VERSION, type DeliverableDocuments }
   from './deliverable-document.js';
@@ -57,7 +57,7 @@ export interface DeliverableEntry {
  * 读一份 manifest。**形状不认识就给 `undefined`** —— 与 `scheme-view.ts` 同一条严格度：
  * 正在被写（半份 JSON）、`format` 不对、主版本读不懂，都不算交付物。
  */
-async function readManifest(fs: StoreFs, dir: string, cwd: string): Promise<Record<string, unknown> | undefined> {
+async function readManifest(dir: string): Promise<Record<string, unknown> | undefined> {
   let text: string;
   try {
     text = await readFile(join(dir, 'manifest.json'), 'utf8');
@@ -76,7 +76,6 @@ async function readManifest(fs: StoreFs, dir: string, cwd: string): Promise<Reco
   // 主版本读不懂 ⇒ 整份不认（spec §3、§7）。只认 1。
   if (record.schemaVersion !== DELIVERABLE_SCHEMA_VERSION) return undefined;
   if (typeof record.slug !== 'string' || record.slug === '') return undefined;
-  void cwd;                                // 参数留着：将来要按 cwd 做相对化时不必改签名
   return record;
 }
 
@@ -92,7 +91,7 @@ export async function listDeliverables(fs: StoreFs, cwd: string): Promise<readon
   const out: DeliverableEntry[] = [];
   for (const name of names.sort()) {
     const dir = join(root, name);
-    const manifest = await readManifest(fs, dir, cwd);
+    const manifest = await readManifest(dir);
     if (manifest === undefined) continue;
     out.push({
       path: dir,
