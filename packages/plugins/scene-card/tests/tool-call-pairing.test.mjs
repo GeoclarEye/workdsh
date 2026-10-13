@@ -5,7 +5,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ToolCallPairing, parseJsonText } from '../dist/runtime/tool-call-pairing.js';
+import { ToolCallPairing, parseJsonText, MAX_PENDING } from '../dist/runtime/tool-call-pairing.js';
 
 const call = (callId, name, args) => ({
   type: 'tool/call',
@@ -47,10 +47,39 @@ test('只有 result 没有 call（窗口截断）⇒ 取不到，而不是拼半
   assert.equal(pairing.take('c9'), undefined);
 });
 
+test('孤儿 result 先到、call 后到 ⇒ 不能拿旧 result 错配（无闸时会配出一对）', () => {
+  const pairing = new ToolCallPairing();
+  pairing.note(result('c1', { stale: true }));   // 先来的 result 配不到当时的任何 call
+  pairing.note(call('c1', 't', {}));
+  assert.equal(pairing.take('c1'), undefined);
+});
+
 test('只有 call 没有 result（还在跑）⇒ 取不到', () => {
   const pairing = new ToolCallPairing();
   pairing.note(call('c1', 't', {}));
   assert.equal(pairing.take('c1'), undefined);
+});
+
+/**
+ * 配对 id 的两条读法各钉一条。**故意不钉谁优先** —— 官方 `ToolResultMessage` 里
+ * `source.callId` 与 `toolCallId` 都是必填，平台没有定义优先级，钉一个胜者等于凭空造规则。
+ * 这里只要求：任何一条单独存在时都读得出 id。夹具同时给两个字段时两条读法会互相遮蔽，
+ * 所以这两条必须只给其中一个。
+ */
+test('id 只在 message.source.callId（无 toolCallId）⇒ 照样配得上', () => {
+  const pairing = new ToolCallPairing();
+  pairing.note(call('c1', 't', {}));
+  pairing.note({ type: 'tool/result', data: { message: { role: 'tool', source: { kind: 'tool', callId: 'c1' },
+    content: [{ type: 'text', text: '{"a":1}' }] } } });
+  assert.deepEqual(pairing.take('c1')?.result, { a: 1 });
+});
+
+test('id 只在 message.toolCallId（无 source）⇒ 照样配得上', () => {
+  const pairing = new ToolCallPairing();
+  pairing.note(call('c1', 't', {}));
+  pairing.note({ type: 'tool/result', data: { message: { role: 'tool', toolCallId: 'c1',
+    content: [{ type: 'text', text: '{"a":1}' }] } } });
+  assert.deepEqual(pairing.take('c1')?.result, { a: 1 });
 });
 
 test('入参不是 JSON ⇒ 整个配对放弃，不拿半个入参去写文件', () => {
@@ -84,4 +113,36 @@ test('parseJsonText：单块 text 才认，多块/非 text 一律不认', () => 
   assert.equal(parseJsonText({ content: [{ type: 'text', text: '{}' }, { type: 'text', text: '{}' }] }), undefined);
   assert.equal(parseJsonText({ content: [{ type: 'image', text: '{}' }] }), undefined);
   assert.equal(parseJsonText({}), undefined);
+});
+
+/**
+ * 滞留上界。生产者只 `take` 它关心的那一个工具（geoclar），会话里**其余每次**工具调用的
+ * 结果载荷都不该被它一直攥着 —— 这个进程要活到会话结束。所以 `pending` 与 `settled` 两个账
+ * 都必须有界。
+ *
+ * 但**光断言有界不够**："越界就把两个账全清空"同样有界。所以这里还钉住边界那一下 ——
+ * 正好超出上界一条时，淘汰的必须只是**最老**那条，边界上刚拿到的结果要留得住；
+ * 以及无论喂多少轮，最近一对仍取得出。（实测：只靠"最近一对取得出"抓不住全清空那种写法。）
+ */
+test('喂远超上界次数的调用 ⇒ 两个账都不越界，且最近一对仍取得出', () => {
+  const pairing = new ToolCallPairing();
+  const feed = (i) => {
+    pairing.note(call('k' + i, 'bash', { i }));
+    pairing.note(result('k' + i, { i }));
+  };
+
+  // 边界：正好超出上界一条时，淘汰的必须是**最老**那条，而边界上最新这次的结果仍要留得住。
+  // 这一条专挡"越界就把两个账全清空"那种钝做法 —— 它上界也满足、跑完也还有最近一对，
+  // 却会在边界上丢掉刚刚拿到的结果。光看"最近一对取得出"是抓不住它的。
+  for (let i = 0; i <= MAX_PENDING; i++) feed(i);
+  assert.equal(pairing.take('k0'), undefined, '超出上界后最老那条应已淘汰');
+  assert.deepEqual(pairing.take('k' + MAX_PENDING)?.result, { i: MAX_PENDING }, '边界上最新这次不该被丢');
+
+  // 再喂到远超上界：两个账都不越界，且最近一对仍取得出。
+  const total = MAX_PENDING * 3 + 7;
+  for (let i = MAX_PENDING + 1; i < total; i++) feed(i);
+  const kept = pairing.retained();
+  assert.ok(kept.pending <= MAX_PENDING, `pending 滞留 ${kept.pending} 条，越界`);
+  assert.ok(kept.settled <= MAX_PENDING, `settled 滞留 ${kept.settled} 条，越界`);
+  assert.deepEqual(pairing.take('k' + (total - 1))?.result, { i: total - 1 });
 });

@@ -97,10 +97,15 @@ function textOfUserMessage(data: unknown): string | undefined {
 /**
  * 一个会话的配对器。**每个会话一个实例** —— callId 只在会话内唯一。
  *
- * 待配的 call 只保留最近 `MAX_PENDING` 条：一次会话里排队的调用不该无界增长，
+ * 两个账都只留最近 `MAX_PENDING` 条：一次会话里排队的调用不该无界增长，
  * 而超出的那些本来就是"很久没等到 result"的，丢了也不影响正确性（取不到就不落）。
+ *
+ * `settled` 也必须跟着 `pending` 一起淘汰，且理由不只是对称：生产者只 `take` 它关心的
+ * 那一个工具（geoclar），会话里其余每次工具调用的结果载荷**永远不会被 take 走** ——
+ * 而这个 Map 活在本进程里、与会话同寿。只有淘汰 `pending` 时顺手删掉同 id 的 `settled`，
+ * 才能让它保持有界（`settled` 的键始终是 `pending` 键的子集）。
  */
-const MAX_PENDING = 64;
+export const MAX_PENDING = 64;
 
 export class ToolCallPairing {
   private readonly pending = new Map<string, PendingCall>();
@@ -125,7 +130,12 @@ export class ToolCallPairing {
       this.pending.set(callId, { toolName: name, args: parsed.value });
       if (this.pending.size > MAX_PENDING) {
         const oldest = this.pending.keys().next();
-        if (!oldest.done) this.pending.delete(oldest.value);
+        if (!oldest.done) {
+          // 被淘汰的 call 已经不可能再配成对（`take` 要求 `pending` 与 `settled` 同时在），
+          // 它的结果留着也取不走 —— 顺手删掉，否则 `settled` 随会话无限涨。
+          this.pending.delete(oldest.value);
+          this.settled.delete(oldest.value);
+        }
       }
       return;
     }
@@ -149,8 +159,22 @@ export class ToolCallPairing {
     return { callId, toolName: pending.toolName, args: pending.args, result };
   }
 
-  /** 该会话最近一条用户消息；没有时是空串（调用方据此退回只用时间戳）。 */
+  /**
+   * 该会话最近一条用户消息；没有时是空串（调用方据此退回只用时间戳）。
+   *
+   * 形状读不懂的新用户消息（纯图、空 content、`message` 不成形）**不清空**上一条，这是**有意的**：
+   * subject 略旧也好过没有 —— 交付物总得有个名字，而目录名靠前缀时间戳仍然唯一且有序。
+   * 别把它"修"成空串。
+   */
   latestUserMessage(): string {
     return this.userMessage;
+  }
+
+  /**
+   * 只为诊断与测试：这两个账都是**有界**的（见 {@link MAX_PENDING}）。
+   * 生产者只 `take` 它关心的那一个工具，其余调用的结果载荷不能无限滞留。
+   */
+  retained(): { readonly pending: number; readonly settled: number } {
+    return { pending: this.pending.size, settled: this.settled.size };
   }
 }
