@@ -5,6 +5,7 @@ export const PRODUCT_PACKAGES = Object.freeze([
   'workdsh-plugin-experts',
   'workdsh-plugin-library',
   'workdsh-plugin-projects',
+  'workdsh-plugin-scene-card',
   'workdsh-plugin-skills',
 ])
 
@@ -32,6 +33,7 @@ export const RELEASE_PACKAGES = Object.freeze([
   'workdsh-plugin-experts',
   'workdsh-plugin-connectors',
   'workdsh-plugin-library',
+  'workdsh-plugin-scene-card',
   'workdsh-bundle',
   'workdsh-plugin-projects',
 ])
@@ -47,6 +49,7 @@ export const PACKAGE_DIRECTORIES = Object.freeze({
   'workdsh-plugin-experts': '../../packages/plugins/experts',
   'workdsh-plugin-connectors': '../../packages/plugins/connectors',
   'workdsh-plugin-library': '../../packages/plugins/library',
+  'workdsh-plugin-scene-card': '../../packages/plugins/scene-card',
   'workdsh-bundle': '../../packages/bundle',
   'workdsh-plugin-projects': '../../packages/plugins/projects',
   'workdsh-provider-identity-enterprise': '../../packages/providers/identity-enterprise',

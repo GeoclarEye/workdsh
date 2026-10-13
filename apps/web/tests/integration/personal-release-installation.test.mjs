@@ -9,7 +9,7 @@ import { execFileSync } from 'node:child_process';
 test('personal installer plans four default features, requires optional opt-in, and preserves an existing Profile',async()=>{
  const root=await mkdtemp(join(tmpdir(),'workdsh-delivery-'));
  try {
-  const names=['provider-identity-local','provider-browser-session','plugin-audit','plugin-access','plugin-skills','plugin-experts','plugin-connectors','plugin-library','bundle','plugin-office','plugin-projects','plugin-activity'].map(n=>'workdsh-'+n);
+  const names=['provider-identity-local','provider-browser-session','plugin-audit','plugin-access','plugin-skills','plugin-experts','plugin-connectors','plugin-library','plugin-scene-card','bundle','plugin-office','plugin-projects','plugin-activity'].map(n=>'workdsh-'+n);
   const packages=[];
   for(const name of names){const bytes=Buffer.from(name),filename=name+'.tgz';await writeFile(join(root,filename),bytes);packages.push({name,filename,sha256:createHash('sha256').update(bytes).digest('hex')});}
   await writeFile(join(root,'release-manifest.json'),JSON.stringify({version:'test',harness:'0.1.7-rc.2',packages}));

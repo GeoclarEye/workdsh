@@ -10,7 +10,7 @@ const manifests=new Map();
 for(const directory of directories){try{const manifest=JSON.parse(await readFile(join(base,directory,'package.json'),'utf8'));manifests.set(manifest.name,{manifest,directory});}catch(error){if(error.code!=='ENOENT')throw error;}}
 return manifests;
 }
-export const defaults=['workdsh-provider-identity-local','workdsh-provider-browser-session','workdsh-plugin-audit','workdsh-plugin-access','workdsh-plugin-skills','workdsh-plugin-experts','workdsh-plugin-connectors','workdsh-plugin-library','workdsh-bundle'];
+export const defaults=['workdsh-provider-identity-local','workdsh-provider-browser-session','workdsh-plugin-audit','workdsh-plugin-access','workdsh-plugin-skills','workdsh-plugin-experts','workdsh-plugin-connectors','workdsh-plugin-library','workdsh-plugin-scene-card','workdsh-bundle'];
 const allowed=new Set([...defaults,'workdsh-contracts','workdsh-ui','workdsh-plugin-workbench']);
 export async function auditDefaultPluginDelivery(){
 const manifests=await readOwnedManifests();
