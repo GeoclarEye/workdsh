@@ -56,8 +56,8 @@ if (args.includes('--from-default-profile')) {
   return { home, release, fakeDsh, log: join(home, 'calls.jsonl'), dshHome: join(home, 'dsh-home') };
 }
 
-function run(input, profile) {
-  return spawnSync(process.execPath, [installer, '--directory', input.release, '--profile', profile, '--dsh', input.fakeDsh, '--corepack', input.fakeDsh], {
+function run(input, profile, extraArgs = []) {
+  return spawnSync(process.execPath, [installer, '--directory', input.release, '--profile', profile, '--dsh', input.fakeDsh, '--corepack', input.fakeDsh, ...extraArgs], {
     encoding: 'utf8',
     env: { ...process.env, DSH_HOME: input.dshHome, INSTALL_LOG: input.log },
   });
@@ -110,6 +110,31 @@ test('project installer rejects an incompatible Harness before changing a profil
   } finally { await rm(input.home, { recursive: true, force: true }); }
 });
 
+
+test('--packages-only 装完产品包，但不联网碰官方运行时', async () => {
+  const input = await fixture();
+  try {
+    const profileDir = join(input.dshHome, 'profiles', 'offline');
+    await mkdir(profileDir, { recursive: true });
+    await writeFile(join(profileDir, 'package.json'), '{"marker":"preserve"}');
+    await writeFile(join(profileDir, 'pnpm-workspace.yaml'), 'packages: []\n');
+    const result = run(input, 'offline', ['--packages-only']);
+    assert.equal(result.status, 0, result.stderr);
+    const recorded = await calls(input);
+
+    // 本次 release 的产品包**照装** —— 它们是本地 tgz，不联网。
+    const added = recorded.flatMap(args => args[0] === 'plugin' ? args : []);
+    assert.ok(added.some(arg => arg.includes('workdsh-plugin-scene-card-fixture.tgz')),
+      '产品包必须照装，否则这次发布等于什么都没做');
+    assert.equal(recorded.filter(args => args[0] === 'plugin' && args.includes('dsh-base')).length, 0,
+      '官方基座 dsh-base 不该被碰');
+    // 运行时那两条 pnpm 也不该跑：出网受限的部署机上它们会白等到超时。
+    assert.equal(recorded.some(args => args[0] === 'pnpm' && args.includes(`@deepseek-ai/dsh@${harnessVersion}`)), false);
+    // harness 版本校验仍在（否则"运行时对不上"会被推迟到启动时才炸）。
+    assert.deepEqual(recorded[0], ['--version']);
+    assert.match(await readFile(join(profileDir, 'package.json'), 'utf8'), /preserve/);
+  } finally { await rm(input.home, { recursive: true, force: true }); }
+});
 
 test('installer supplies native build decisions and preserves explicit user choices', async () => {
   const input = await fixture();
