@@ -30,14 +30,18 @@ const bundle = await build({
       import React from 'react';
       import { createRoot } from 'react-dom/client';
       import { SchemeCompareCard } from './src/client/SchemeCompareCard.tsx';
-      window.renderCard = (props) => {
-        // 直接调用拿到返回值：回落是"return null"，只有把这件事记下来才断言得动
-        // （只断言"页面上没有"会放过"渲染了一棵空树"）。
+      // 组件自己的返回值要记下来：回落是"return null"，只断言"页面上没有"会放过"渲染了一棵空树"。
+      // 直接当普通函数调已经不行了 —— 组件里有 useEffect（出结果时问一次自动弹），
+      // 所以在一个真组件体里调它，hook 才落在合法的渲染帧上。
+      function Probe({ props }) {
         const returned = SchemeCompareCard(props);
         window.__returned = returned === null ? 'null' : typeof returned;
-        if (returned !== null && returned !== undefined) {
-          (window.__root ??= createRoot(document.getElementById('root'))).render(returned);
-        }
+        return returned;
+      }
+      // stdin 这一段的 loader 是 js（不开 JSX），所以这里用 createElement。
+      window.renderCard = (props) => {
+        (window.__root ??= createRoot(document.getElementById('root')))
+          .render(React.createElement(Probe, { props }));
       };`,
   },
   bundle: true,
@@ -54,35 +58,8 @@ const bundle = await build({
   }],
 });
 
-/** 一份真实出参 + 评审稿里那两套同池对照（对照两列的值是评审稿的示意值）。 */
-const custom = { key: 'CUSTOM', sceneCount: 235, coveredAreaKm2: 35984.07, coveragePercent: 65.16,
-  uncoveredAreaKm2: 19239.18, estimatedAmount: 5564229.98, pricingComplete: true, budgetCapped: false,
-  budgetFullCoverageAmount: null, dateFrom: '2024-12-06', dateTo: '2026-10-09',
-  gsdMin: 0.25, gsdMax: 0.5, cloudCoverMax: 33.0, cloudCoverMean: 1.33,
-  scenes: [{ id: 'SVN1-02-20261008-00755433', acquiredAt: '2026-10-08 06:29:48', cloud: '13', resolution: 0.3 }] };
-// 这一套演示"预算把它截断了" ⇒ 金额整格琥珀（pricingComplete 为真，所以不是下界）。
-const latest = { ...custom, key: 'LATEST', sceneCount: 312, coveragePercent: 58.4, uncoveredAreaKm2: 22982,
-  estimatedAmount: 6120400, budgetCapped: true, budgetFullCoverageAmount: 7111222.5,
-  dateFrom: '2025-06-01', dateTo: '2026-10-01', gsdMin: 0.3, gsdMax: 0.8,
-  cloudCoverMax: 22, cloudCoverMean: 2.4 };
-const sharpest = { ...custom, key: 'SHARPEST', sceneCount: 118, coveragePercent: 41.0, uncoveredAreaKm2: 32589,
-  estimatedAmount: 7980150, pricingComplete: false, dateFrom: '2025-01-01', dateTo: '2026-09-01',
-  gsdMin: 0.25, gsdMax: 0.3, cloudCoverMax: 8, cloudCoverMean: 0.6 };
-// 精算态的真实形状：出参顺序 = 列序，CUSTOM 打头，后接 LATEST / SHARPEST / CHEAPEST 三套同池对照。
-const cheapest = { ...custom, key: 'CHEAPEST', sceneCount: 640, coveragePercent: 72.6, uncoveredAreaKm2: 15140,
-  estimatedAmount: 3215700, dateFrom: '2024-11-01', dateTo: '2026-10-01', gsdMin: 0.5, gsdMax: 2.0,
-  cloudCoverMax: 20, cloudCoverMean: 4.1 };
-const payload = { mode: 'custom', pool: { candidateCount: 861, usableCount: 561, skippedByCloud: 0,
-  skippedByFilter: 299, skippedNoGeometry: 1, skippedNoIntersection: 0, effectiveCloudCoverMax: 100,
-  regionAreaKm2: 55226.95, coveredAreaKm2: 36625.09, coveragePercent: 66.32 },
-  candidatePoolLimit: 100, poolAtLimit: true, schemes: [custom, latest, sharpest, cheapest],
-  returnedCount: 4, truncated: false, relaxation: { kind: 'CLOUD_COVER_MAX', value: 26, coveragePercent: 100 } };
-
-/** 12 套预设：键与顺序取自后端 `SceneSchemeKey.presetKeys()`（VALUE 排在第 11）。 */
-const presetKeys = ['LATEST', 'SHARPEST', 'CLEAREST', 'CHEAPEST', 'SHARP_CLEAN', 'CLEAN_SHARP',
-  'RECENT_SHARP', 'RECENT_CLEAN', 'CLEAN_CHEAP', 'SHARP_CHEAP', 'VALUE', 'CONSISTENT'];
-const presets = { ...payload, mode: 'presets', relaxation: null,
-  schemes: presetKeys.map((key, index) => ({ ...custom, key, sceneCount: 100 + index, coveragePercent: 40 + index })) };
+/** 一份真实出参 + 三套同池对照 —— 夹具与右侧面板的渲染测试**共用同一份**（见 fixtures/）。 */
+import { cheapest, custom, latest, payload, presets, sharpest } from './fixtures/geoclar-recommend.mjs';
 
 /** 琥珀的定义色；页面里把主题令牌钉成这个值，就可以拿**算出来的颜色**做断言。 */
 const WARN = 'rgb(239, 180, 79)';
@@ -109,8 +86,10 @@ async function withCard(run, { callId = 'call-1', result = payload, phase = 'res
     await page.goto('http://127.0.0.1:19113/');
     await page.addScriptTag({ content: bundle.outputFiles[0].text });
     await page.evaluate(({ block, id, stage }) => {
+      window.__autos = [];
       window.renderCard({ phase: stage, block, callId: id, toolName: 'mcp__geoclar__geoclar_recommend_schemes',
-        openDeliverable: (opened) => { window.__opened = opened; } });
+        openDeliverable: (opened) => { window.__opened = opened; },
+        autoOpenDeliverable: (called, hasDeliverable) => { window.__autos.push([called, hasDeliverable]); return false; } });
     }, { block: blockOf(result), id: callId, stage: phase });
     await run(page);
   } finally {

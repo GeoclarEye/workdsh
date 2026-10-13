@@ -119,7 +119,8 @@ export interface DeliverableInput {
   readonly result?: unknown;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+/** 运行时数据的形状闸：两个面（视图模型、面板的结果块读法）共用同一个。 */
+export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 

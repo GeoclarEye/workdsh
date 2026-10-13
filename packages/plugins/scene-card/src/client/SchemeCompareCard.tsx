@@ -13,18 +13,17 @@
  */
 import type { ToolCallViewProps } from '@deepseek-ai/dsh-client-ui-tool/client';
 import type { ReactNode } from 'react';
-import { buildDeliverableView } from './scheme-view.js';
+import { useEffect } from 'react';
+import { buildDeliverableView, isRecord } from './scheme-view.js';
 import type { DeliverableView, SchemeView } from './scheme-view.js';
 import { schemeCardCss } from './styles.js';
 
 /**
- * 结果阶段交给视图的块；从槽位契约上取，免得再引一个包只为一个类型。
- *
  * 注意 props 用的是**全阶段**的 `ToolCallViewProps` 而不是 `StartedToolCallViewProps`：
  * 注册点的组件契约按全阶段校验（preparing 也会被派发到这个 key），
  * 少一个阶段的成员就过不了注册的类型检查 —— 官方那几行也是这么写的。
+ * 因此读结果时按形状读（{@link parseResult}），不按类型断言。
  */
-type ResultBlock = Extract<ToolCallViewProps, { phase: 'result' }>['block'];
 
 /**
  * 后端方案 key → 人话（对照技能第三节那张表；后端刻意只出码）。
@@ -40,7 +39,8 @@ const SCHEME_LABELS: Record<string, string> = {
   CLEAN_CHEAP: '干净 · 兼顾省钱', SHARP_CHEAP: '清晰 · 兼顾省钱',
 };
 
-const label = (key: string): string => SCHEME_LABELS[key] ?? key;
+/** 方案 key → 列名；面板也用这一个（两个面不能各叫各的）。 */
+export const label = (key: string): string => SCHEME_LABELS[key] ?? key;
 
 /** 千分位；金额与面积共用（两者都动辄百万/万级，不分组读不出来）。 */
 const grouped = (value: number): string => Math.round(value).toLocaleString('en-US');
@@ -79,6 +79,11 @@ export interface SchemeMetric {
    * （预算把这个数截断了，所以它不能直接当结论用）。覆盖率那一行**没有** `tone`。
    */
   readonly tone?: (scheme: SchemeView) => 'warn' | undefined;
+  /**
+   * 面板竖排时这一行**置顶并放大**（评审稿：金额在右侧面板里是最响的那一格）。
+   * 卡里四列并排时不生效 —— 并排时"最响"由主推那一列的底色与列头承担。
+   */
+  readonly panelLeading?: boolean;
 }
 
 export const SCHEME_METRICS: readonly SchemeMetric[] = [
@@ -124,17 +129,24 @@ export const SCHEME_METRICS: readonly SchemeMetric[] = [
     // 琥珀只留给"这个数不能直接当结论用"：预算把方案截断了。金额下界（≥）自己带琥珀。
     tone: (scheme) => (scheme.budgetCapped ? 'warn' : undefined),
     read: (scheme) => amountText(scheme.amount),
+    // 面板竖排时置顶放大（评审稿右半边）；卡里四列并排时不动。
+    panelLeading: true,
   },
 ];
 
 /**
  * 结果块里**唯一那段文本**的 JSON —— 与官方卡片同一读法（`singleResultText` 的口径）：
  * 多段内容就当作读不懂，宁可回落，不去猜哪一段是出参。
+ *
+ * 收 `unknown` 是因为两个面各交各的：卡交 `props.block`，面板交它从对话节点里
+ * 取到的那件结果 —— 形状都不由我们保证。
  */
-function parseResult(block: ResultBlock): unknown {
-  if (block.content.length !== 1) return undefined;
-  const only = block.content[0];
-  if (only === undefined || only.type !== 'text') return undefined;
+function parseResult(block: unknown): unknown {
+  if (!isRecord(block)) return undefined;
+  const content = block.content;
+  if (!Array.isArray(content) || content.length !== 1) return undefined;
+  const only = content[0];
+  if (!isRecord(only) || only.type !== 'text' || typeof only.text !== 'string') return undefined;
   try {
     return JSON.parse(only.text);
   } catch {
@@ -143,12 +155,17 @@ function parseResult(block: ResultBlock): unknown {
 }
 
 /**
- * 一次调用 → 交付物读数。**两个面共用这一个入口**：卡据此决定画不画，
- * 自动弹也据此决定"这一轮有没有交付物"（Task 4）。
+ * 一件工具结果 → 交付物读数。**两个面共用这一个入口**：卡据此决定画不画，
+ * 面板据此画方案那一块（Task 4）。
  */
+export function deliverableViewOfResultBlock(block: unknown): DeliverableView | undefined {
+  return buildDeliverableView({ phase: 'result', result: parseResult(block) });
+}
+
+/** 卡这一侧：只有 result 阶段有出参（preparing / start 没有可画的东西）。 */
 export function deliverableViewOf(props: ToolCallViewProps): DeliverableView | undefined {
   if (props.phase !== 'result') return undefined;
-  return buildDeliverableView({ phase: props.phase, result: parseResult(props.block) });
+  return deliverableViewOfResultBlock(props.block);
 }
 
 /**
@@ -225,27 +242,59 @@ function PoolLine({ pool }: { readonly pool: NonNullable<DeliverableView['pool']
   );
 }
 
-/** 面板用的同一份读数：一套方案、一行一个指标（376px 塞不下并排，见评审稿的注）。 */
+/**
+ * 面板用的同一份读数：一套方案、一行一个指标（376px 塞不下并排，见评审稿的注）。
+ *
+ * **与卡共用 `SCHEME_METRICS`**：同一份出参、同一个读法，两个面不可能把同一个数读成两个样子。
+ * 唯一的差别是排法 —— 面板竖排，把标了 `panelLeading` 的那一行（金额）提到最上面并放大。
+ */
 export function SchemeMetrics({ scheme }: { readonly scheme: SchemeView }): ReactNode {
+  const rows = [...SCHEME_METRICS.filter((metric) => metric.panelLeading === true),
+    ...SCHEME_METRICS.filter((metric) => metric.panelLeading !== true)];
   return (
     <dl className="wd-sc-metrics">
-      {SCHEME_METRICS.map((metric) => (
-        <div key={metric.id} className={metric.tone?.(scheme) === 'warn' ? 'wd-sc-row is-warn' : 'wd-sc-row'}>
-          <dt>{metric.label}</dt>
-          <dd>{metric.read(scheme)}</dd>
-        </div>
-      ))}
+      {rows.map((metric) => {
+        const classes = ['wd-sc-row'];
+        if (metric.tone?.(scheme) === 'warn') classes.push('is-warn');
+        if (metric.panelLeading === true) classes.push('is-leading');
+        return (
+          <div key={metric.id} className={classes.join(' ')}>
+            <dt>{metric.label}</dt>
+            <dd>{metric.read(scheme)}</dd>
+          </div>
+        );
+      })}
     </dl>
   );
 }
 
-/** 对话内的卡。props 的注入面（`openDeliverable`）在 `client.tsx` 的注册点给出。 */
+/** 卡这一侧从注册点拿到的注入面（`client.tsx` 给出）。 */
+export interface SchemeCompareCardInjected {
+  /** 历史可达性：把面板重绑到**这张卡的**那一次调用（spec §4.3）。 */
+  readonly openDeliverable: (callId: string) => void;
+  /**
+   * 受控自动弹（spec §4.5）；返回是否真的弹了。判据是"该不该调用 `openTabIn`"，
+   * 实现与判据都在 `client.tsx` / `auto-open.ts`，这里只负责在出结果时问一次。
+   */
+  readonly autoOpenDeliverable: (callId: string, hasDeliverable: boolean) => boolean;
+}
+
+/** 对话内的卡。 */
 export function SchemeCompareCard(
-  props: ToolCallViewProps & { readonly openDeliverable: (callId: string) => void },
+  props: ToolCallViewProps & SchemeCompareCardInjected,
 ): ReactNode {
   const view = deliverableViewOf(props);
-  // 认不出形状、或一套方案都没有 ⇒ 回落官方通用卡片（这就是回落判据的落点）。
-  if (view === undefined || view.primary === undefined) return null;
+  // 认不出形状、或**一套方案都没有** ⇒ 回落官方通用卡片（这就是回落判据的落点）。
+  const hasDeliverable = view !== undefined && view.primary !== undefined;
+  const autoOpen = props.autoOpenDeliverable;
+  const { callId, phase } = props;
+  // 出结果时问一次"要不要把面板弹开"。放在早退之前：hook 的调用次序不能随出参形状变。
+  // 重复执行是安全的 —— 真弹过的那个轮次会记在 `openedTurns` 里，第二次就否了。
+  useEffect(() => {
+    if (phase !== 'result') return;
+    autoOpen(callId, hasDeliverable);
+  }, [autoOpen, callId, phase, hasDeliverable]);
+  if (!hasDeliverable) return null;
   // 不带条件时后端回 12 套预设：那是菜单，不是结论。只画主推那一套，其余用一行话说清去处。
   const columns = view.presets ? [view.primary] : view.schemes;
   const relax = view.next?.kind === 'relax' ? view.next : undefined;
